@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Hello, {{ player['name'] }}</h2>
+
+  {% if not current_round %}
+    <p>No active question yet. Please wait for the host to start a round.</p>
+  {% else %}
+    <h3>Current question</h3>
+    <p>{{ current_round['question'] }}</p>
+
+    {% if already_answered %}
+      <p><strong>You have already submitted an answer for this round.</strong></p>
+    {% else %}
+      {% if error %}
+        <div class="error">{{ error }}</div>
+      {% endif %}
+      <form method="post">
+        <label>Your answer</label>
+        <input type="text" name="answer" placeholder="Type your answer">
+        <button type="submit" class="btn">Submit answer</button>
+      </form>
+    {% endif %}
+  {% endif %}
+</div>
+{% endblock %}
