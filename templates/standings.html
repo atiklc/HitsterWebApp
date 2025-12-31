@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block head_extra %}
+<script>
+  async function loadStandings() {
+    try {
+      const res = await fetch("{{ url_for('api_standings') }}");
+      const data = await res.json();
+      const tbody = document.getElementById("standings-body");
+      tbody.innerHTML = "";
+      data.forEach((row, index) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${index + 1}</td>
+          <td>${row.player}</td>
+          <td>${row.score}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      console.error("Error loading standings", e);
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    loadStandings();
+    setInterval(loadStandings, 3000); // refresh every 3s
+  });
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h2>Live Standings</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>Player</th>
+        <th>Points</th>
+      </tr>
+    </thead>
+    <tbody id="standings-body">
+      <!-- filled by JS -->
+    </tbody>
+  </table>
+</div>
+{% endblock %}
