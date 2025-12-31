@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Admin panel</h2>
+
+  <h3>Create & open a round</h3>
+  <form method="post">
+    <input type="hidden" name="action" value="create_round">
+    <label>Question</label>
+    <textarea name="question" rows="2" placeholder="Type the question"></textarea>
+    <label>Correct answer (optional, can be empty for now)</label>
+    <input type="text" name="correct_answer" placeholder="Correct answer for scoring">
+    <button type="submit" class="btn">Create + open round</button>
+  </form>
+
+  <hr>
+
+  <h3>Current open round</h3>
+  {% if current_round %}
+    <p><strong>ID:</strong> {{ current_round['id'] }}</p>
+    <p><strong>Question:</strong> {{ current_round['question'] }}</p>
+    <p><strong>Correct answer:</strong> {{ current_round['correct_answer'] or "(not set)" }}</p>
+    <form method="post" style="margin-top:8px;">
+      <input type="hidden" name="action" value="close_round">
+      <button type="submit" class="btn secondary">Close & score this round</button>
+    </form>
+  {% else %}
+    <p>No open round.</p>
+  {% endif %}
+
+</div>
+
+<div class="card">
+  <h3>Recent rounds</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Status</th>
+        <th>Question</th>
+        <th>Correct answer</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rounds %}
+        <tr>
+          <td>{{ r['id'] }}</td>
+          <td>{{ r['status'] }}</td>
+          <td>{{ r['question'] }}</td>
+          <td>{{ r['correct_answer'] }}</td>
+          <td>{{ r['created_at'] }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
