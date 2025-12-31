@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Join the game</h2>
+  {% if player %}
+    <p>You are logged in as <strong>{{ player['name'] }}</strong>.</p>
+    <p><a class="btn" href="{{ url_for('play') }}">Go to current question</a></p>
+  {% else %}
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+    <form method="post">
+      <label>Player name</label>
+      <input type="text" name="player_name" placeholder="Your name">
+      <button type="submit" class="btn">Join</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}
