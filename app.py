@@ -284,7 +284,6 @@ def create_app():
 
         round_row = get_current_open_round()
         if not round_row:
-            # no open round yet
             return render_template(
                 "game.html",
                 player=player,
@@ -307,13 +306,9 @@ def create_app():
             if already_answered:
                 return redirect(url_for("game"))
 
-            song_raw   = request.form.get("answer_song", "")
-            artist_raw = request.form.get("answer_artist", "")
-            year_raw   = request.form.get("answer_year", "")
-
-            song   = song_raw.strip()
-            artist = artist_raw.strip()
-            year   = year_raw.strip()
+            song   = (request.form.get("answer_song", "") or "").strip()
+            artist = (request.form.get("answer_artist", "") or "").strip()
+            year   = (request.form.get("answer_year", "") or "").strip()
 
             if not song and not artist and not year:
                 return render_template(
@@ -340,7 +335,6 @@ def create_app():
             current_round=round_row,
             already_answered=already_answered
         )
-    
     
     @app.route("/standings")
     def standings():
