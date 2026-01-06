@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block head_extra %}
+<script>
+  async function loadStandings() {
+    try {
+      const res = await fetch("{{ url_for('api_standings') }}");
+      const data = await res.json();
+      const tbody = document.getElementById("standings-body");
+      tbody.innerHTML = "";
+      data.forEach((row, index) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${index + 1}</td>
+          <td>${row.player}</td>
+          <td>${row.score}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      console.error("Error loading standings", e);
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    loadStandings();
+    setInterval(loadStandings, 3000); // refresh every 3s
+  });
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h2>Hello, {{ player['name'] }}</h2>
+
+  {% if not current_round %}
+    <p>No active song yet. Please wait for the host to start a Hitster round.</p>
+  {% else %}
+    <h3>Current song</h3>
+    <p>{{ current_round['question'] }}</p>
+
+    {% if already_answered %}
+      <p><strong>You have already submitted your guess for this song.</strong></p>
+    {% else %}
+      {% if error %}
+        <div class="error">{{ error }}</div>
+      {% endif %}
+      <form method="post">
+        <label>Song title</label>
+        <input type="text" name="answer_song" placeholder="Song title">
+
+        <label>Artist</label>
+        <input type="text" name="answer_artist" placeholder="Artist">
+
+        <label>Year</label>
+        <input type="text" name="answer_year" placeholder="Year (e.g. 1976)">
+
+        <button type="submit" class="btn">Submit guess</button>
+      </form>
+    {% endif %}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Live Standings</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>Player</th>
+        <th>Points</th>
+      </tr>
+    </thead>
+    <tbody id="standings-body">
+      <!-- filled by JS -->
+    </tbody>
+  </table>
+</div>
+{% endblock %}
