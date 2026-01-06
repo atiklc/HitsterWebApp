@@ -1,33 +1,56 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-  <h2>Admin panel</h2>
+  <h2>Hitster – Admin panel</h2>
 
-  <h3>Create & open a round</h3>
+  <h3>Create & open a new round</h3>
   <form method="post">
     <input type="hidden" name="action" value="create_round">
-    <label>Question</label>
-    <textarea name="question" rows="2" placeholder="Type the question"></textarea>
-    <label>Correct answer (optional, can be empty for now)</label>
-    <input type="text" name="correct_answer" placeholder="Correct answer for scoring">
+
+    <label>Question (e.g. "Song #3")</label>
+    <textarea name="question" rows="2" placeholder="Text players see"></textarea>
+
+    <label>Correct song (optional now)</label>
+    <input type="text" name="correct_song" placeholder="Exact song title">
+
+    <label>Correct artist (optional now)</label>
+    <input type="text" name="correct_artist" placeholder="Exact artist name">
+
+    <label>Correct year (optional now)</label>
+    <input type="text" name="correct_year" placeholder="e.g. 1976">
+
     <button type="submit" class="btn">Create + open round</button>
   </form>
+</div>
 
-  <hr>
-
+<div class="card">
   <h3>Current open round</h3>
   {% if current_round %}
     <p><strong>ID:</strong> {{ current_round['id'] }}</p>
     <p><strong>Question:</strong> {{ current_round['question'] }}</p>
-    <p><strong>Correct answer:</strong> {{ current_round['correct_answer'] or "(not set)" }}</p>
-    <form method="post" style="margin-top:8px;">
+
+    <form method="post" style="margin-top:8px; margin-bottom: 8px;">
+      <input type="hidden" name="action" value="set_answers">
+
+      <label>Correct song</label>
+      <input type="text" name="correct_song" value="{{ current_round['correct_song'] or '' }}">
+
+      <label>Correct artist</label>
+      <input type="text" name="correct_artist" value="{{ current_round['correct_artist'] or '' }}">
+
+      <label>Correct year</label>
+      <input type="text" name="correct_year" value="{{ current_round['correct_year'] or '' }}">
+
+      <button type="submit" class="btn">Update correct answers</button>
+    </form>
+
+    <form method="post">
       <input type="hidden" name="action" value="close_round">
       <button type="submit" class="btn secondary">Close & score this round</button>
     </form>
   {% else %}
     <p>No open round.</p>
   {% endif %}
-
 </div>
 
 <div class="card">
@@ -38,7 +61,9 @@
         <th>ID</th>
         <th>Status</th>
         <th>Question</th>
-        <th>Correct answer</th>
+        <th>Song</th>
+        <th>Artist</th>
+        <th>Year</th>
         <th>Created</th>
       </tr>
     </thead>
@@ -48,7 +73,9 @@
           <td>{{ r['id'] }}</td>
           <td>{{ r['status'] }}</td>
           <td>{{ r['question'] }}</td>
-          <td>{{ r['correct_answer'] }}</td>
+          <td>{{ r['correct_song'] }}</td>
+          <td>{{ r['correct_artist'] }}</td>
+          <td>{{ r['correct_year'] }}</td>
           <td>{{ r['created_at'] }}</td>
         </tr>
       {% endfor %}
