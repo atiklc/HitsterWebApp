@@ -223,13 +223,23 @@ def create_app():
 
         already_answered = guess is not None
 
-        if request.method == "POST":
+                if request.method == "POST":
             if already_answered:
                 return redirect(url_for("play"))
 
-            song = request.form.get("answer_song", "").strip()
-            artist = request.form.get("answer_artist", "").strip()
-            year = request.form.get("answer_year", "").strip()
+            # Accept both new (answer_song/artist/year) and old (answer) fields
+            raw_song   = request.form.get("answer_song", "")
+            raw_artist = request.form.get("answer_artist", "")
+            raw_year   = request.form.get("answer_year", "")
+            raw_single = request.form.get("answer", "")  # fallback if template still uses 'answer'
+
+            # If only a single field exists (old template), treat it as song title
+            if not raw_song and not raw_artist and not raw_year and raw_single:
+                raw_song = raw_single
+
+            song   = raw_song.strip()
+            artist = raw_artist.strip()
+            year   = raw_year.strip()
 
             if not song and not artist and not year:
                 return render_template(
@@ -239,6 +249,16 @@ def create_app():
                     already_answered=already_answered,
                     error="Please enter at least one field."
                 )
+
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT OR REPLACE INTO guesses(player_id, round_id, answer_song, answer_artist, answer_year)
+                VALUES (?,?,?,?,?)
+            """, (player["id"], round_row["id"], song, artist, year))
+            conn.commit()
+            conn.close()
+            return redirect(url_for("play"))
 
             conn = get_db()
             cur = conn.cursor()
