@@ -223,7 +223,7 @@ def create_app():
 
         already_answered = guess is not None
 
-                if request.method == "POST":
+        if request.method == "POST":
             if already_answered:
                 return redirect(url_for("play"))
 
