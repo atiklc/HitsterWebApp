@@ -365,7 +365,7 @@ def create_app():
         ]
         return jsonify(data)
 
-    @app.route("/admin", methods=["GET", "POST"])
+        @app.route("/admin", methods=["GET", "POST"])
     def admin():
         conn = get_db()
         cur = conn.cursor()
@@ -407,9 +407,9 @@ def create_app():
                 )
                 round_row = cur.fetchone()
                 if round_row:
-                    # score guesses for this round
+                    # score all guesses for this round
                     score_hitster_round(cur, round_row)
-                    # close round
+                    # close it
                     cur.execute(
                         "UPDATE rounds SET status = 'closed' WHERE id = ?",
                         (round_row["id"],)
