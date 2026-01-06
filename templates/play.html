@@ -16,10 +16,17 @@
         <div class="error">{{ error }}</div>
       {% endif %}
       <form method="post">
-        <label>Your answer</label>
-        <input type="text" name="answer" placeholder="Type your answer">
-        <button type="submit" class="btn">Submit answer</button>
-      </form>
+  <label>Song title</label>
+  <input type="text" name="answer_song" placeholder="Song title">
+
+  <label>Artist</label>
+  <input type="text" name="answer_artist" placeholder="Artist">
+
+  <label>Year</label>
+  <input type="text" name="answer_year" placeholder="Year (e.g. 1976)">
+
+  <button type="submit" class="btn">Submit guess</button>
+</form>
     {% endif %}
   {% endif %}
 </div>
