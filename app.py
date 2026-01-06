@@ -276,7 +276,72 @@ def create_app():
             current_round=round_row,
             already_answered=already_answered
         )
+    @app.route("/game", methods=["GET", "POST"])
+    def game():
+        player = get_current_player()
+        if not player:
+            return redirect(url_for("index"))
 
+        round_row = get_current_open_round()
+        if not round_row:
+            # no open round yet
+            return render_template(
+                "game.html",
+                player=player,
+                current_round=None,
+                already_answered=False
+            )
+
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM guesses WHERE player_id = ? AND round_id = ?",
+            (player["id"], round_row["id"])
+        )
+        guess = cur.fetchone()
+        conn.close()
+
+        already_answered = guess is not None
+
+        if request.method == "POST":
+            if already_answered:
+                return redirect(url_for("game"))
+
+            song_raw   = request.form.get("answer_song", "")
+            artist_raw = request.form.get("answer_artist", "")
+            year_raw   = request.form.get("answer_year", "")
+
+            song   = song_raw.strip()
+            artist = artist_raw.strip()
+            year   = year_raw.strip()
+
+            if not song and not artist and not year:
+                return render_template(
+                    "game.html",
+                    player=player,
+                    current_round=round_row,
+                    already_answered=already_answered,
+                    error="Please enter at least one field."
+                )
+
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT OR REPLACE INTO guesses(player_id, round_id, answer_song, answer_artist, answer_year)
+                VALUES (?,?,?,?,?)
+            """, (player["id"], round_row["id"], song, artist, year))
+            conn.commit()
+            conn.close()
+            return redirect(url_for("game"))
+
+        return render_template(
+            "game.html",
+            player=player,
+            current_round=round_row,
+            already_answered=already_answered
+        )
+    
+    
     @app.route("/standings")
     def standings():
         return render_template("standings.html")
