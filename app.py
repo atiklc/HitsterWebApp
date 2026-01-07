@@ -357,9 +357,9 @@ def create_app():
             {"player": r["name"], "score": r["total_score"]}
             for r in rows
         ]
-        return jsonify(data)
+                return jsonify(data)
 
-        @app.route("/admin", methods=["GET", "POST"])
+    @app.route("/admin", methods=["GET", "POST"])
     def admin():
         conn = get_db()
         cur = conn.cursor()
@@ -401,19 +401,14 @@ def create_app():
                 )
                 round_row = cur.fetchone()
                 if round_row:
-                    # score all guesses for this round
                     score_hitster_round(cur, round_row)
-                    # close it
                     cur.execute(
                         "UPDATE rounds SET status = 'closed' WHERE id = ?",
                         (round_row["id"],)
                     )
                     conn.commit()
 
-        # fetch recent rounds
-        cur.execute(
-            "SELECT * FROM rounds ORDER BY id DESC LIMIT 20"
-        )
+        cur.execute("SELECT * FROM rounds ORDER BY id DESC LIMIT 20")
         rounds = cur.fetchall()
         conn.close()
 
