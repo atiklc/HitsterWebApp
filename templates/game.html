@@ -2,6 +2,9 @@
 
 {% block head_extra %}
 <script>
+  // Jinja sets whether we should auto-reload the page
+  var shouldAutoReload = {{ 'true' if (not current_round) or already_answered else 'false' }};
+
   async function loadStandings() {
     try {
       const res = await fetch("{{ url_for('api_standings') }}");
@@ -24,7 +27,13 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     loadStandings();
-    setInterval(loadStandings, 3000); // refresh every 3 seconds
+    setInterval(loadStandings, 3000); // refresh standings every 3s
+
+    if (shouldAutoReload) {
+      setInterval(() => {
+        window.location.reload();
+      }, 5000); // check for new round every 5s
+    }
   });
 </script>
 {% endblock %}
