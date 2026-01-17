@@ -1,85 +1,156 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="card">
-  <h2>Hitster – Admin panel v2</h2>
 
-  <h3>Create & open a new round</h3>
-  <form method="post">
-    <input type="hidden" name="action" value="create_round">
-
-    <label>Question (e.g. "Song #3")</label>
-    <textarea name="question" rows="2" placeholder="Text players see"></textarea>
-
-    <label>Correct song (optional now)</label>
-    <input type="text" name="correct_song" placeholder="Exact song title">
-
-    <label>Correct artist (optional now)</label>
-    <input type="text" name="correct_artist" placeholder="Exact artist name">
-
-    <label>Correct year (optional now)</label>
-    <input type="text" name="correct_year" placeholder="e.g. 1976">
-
-    <button type="submit" class="btn">Create + open round</button>
-  </form>
-</div>
-
-<div class="card">
-  <h3>Current open round</h3>
-  {% if current_round %}
-    <p><strong>ID:</strong> {{ current_round['id'] }}</p>
-    <p><strong>Question:</strong> {{ current_round['question'] }}</p>
-
-    <form method="post" style="margin-top:8px; margin-bottom: 8px;">
-      <input type="hidden" name="action" value="set_answers">
-
-      <label>Correct song</label>
-      <input type="text" name="correct_song" value="{{ current_round['correct_song'] or '' }}">
-
-      <label>Correct artist</label>
-      <input type="text" name="correct_artist" value="{{ current_round['correct_artist'] or '' }}">
-
-      <label>Correct year</label>
-      <input type="text" name="correct_year" value="{{ current_round['correct_year'] or '' }}">
-
-      <button type="submit" class="btn">Update correct answers</button>
-    </form>
-
+{% if not is_admin %}
+  <div class="card">
+    <h2>Admin login</h2>
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
     <form method="post">
-      <input type="hidden" name="action" value="close_round">
-      <button type="submit" class="btn secondary">Close & score this round</button>
+      <input type="hidden" name="action" value="login">
+      <label>Password</label>
+      <input type="password" name="password" placeholder="Admin password">
+      <button type="submit" class="btn">Login</button>
     </form>
-  {% else %}
-    <p>No open round.</p>
-  {% endif %}
-</div>
+  </div>
 
-<div class="card">
-  <h3>Recent rounds</h3>
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Status</th>
-        <th>Question</th>
-        <th>Song</th>
-        <th>Artist</th>
-        <th>Year</th>
-        <th>Created</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in rounds %}
+{% else %}
+
+  <div class="card">
+    <h2>Hitster – Admin panel</h2>
+    <form method="post" style="margin-bottom: 8px;">
+      <input type="hidden" name="action" value="logout_admin">
+      <button type="submit" class="btn secondary">Logout admin</button>
+    </form>
+
+    <h3>Create & open a new round</h3>
+    <form method="post">
+      <input type="hidden" name="action" value="create_round">
+
+      <label>Question (e.g. "Song #3")</label>
+      <textarea name="question" rows="2" placeholder="Text players see"></textarea>
+
+      <label>Correct song (optional now)</label>
+      <input type="text" name="correct_song" placeholder="Exact song title">
+
+      <label>Correct artist (optional now)</label>
+      <input type="text" name="correct_artist" placeholder="Exact artist name">
+
+      <label>Correct year (optional now)</label>
+      <input type="text" name="correct_year" placeholder="e.g. 1976">
+
+      <button type="submit" class="btn">Create + open round</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>Current open round</h3>
+    {% if current_round %}
+      <p><strong>ID:</strong> {{ current_round['id'] }}</p>
+      <p><strong>Question:</strong> {{ current_round['question'] }}</p>
+
+      <form method="post" style="margin-top:8px; margin-bottom: 8px;">
+        <input type="hidden" name="action" value="set_answers">
+
+        <label>Correct song</label>
+        <input type="text" name="correct_song" value="{{ current_round['correct_song'] or '' }}">
+
+        <label>Correct artist</label>
+        <input type="text" name="correct_artist" value="{{ current_round['correct_artist'] or '' }}">
+
+        <label>Correct year</label>
+        <input type="text" name="correct_year" value="{{ current_round['correct_year'] or '' }}">
+
+        <button type="submit" class="btn">Update correct answers</button>
+      </form>
+
+      <form method="post" style="margin-bottom: 12px;">
+        <input type="hidden" name="action" value="close_round">
+        <button type="submit" class="btn secondary">Close & score this round</button>
+      </form>
+
+      {% if current_round_players %}
+        <h4>Players in this round</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th>Answered?</th>
+              <th>Song</th>
+              <th>Artist</th>
+              <th>Year</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in current_round_players %}
+              <tr>
+                <td>{{ row['name'] }}</td>
+                <td>
+                  {% if row['answer_song'] or row['answer_artist'] or row['answer_year'] %}
+                    ✔
+                  {% else %}
+                    –
+                  {% endif %}
+                </td>
+                <td>{{ row['answer_song'] }}</td>
+                <td>{{ row['answer_artist'] }}</td>
+                <td>{{ row['answer_year'] }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p>No players yet for this round.</p>
+      {% endif %}
+
+    {% else %}
+      <p>No open round.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Recent rounds</h3>
+    <table>
+      <thead>
         <tr>
-          <td>{{ r['id'] }}</td>
-          <td>{{ r['status'] }}</td>
-          <td>{{ r['question'] }}</td>
-          <td>{{ r['correct_song'] }}</td>
-          <td>{{ r['correct_artist'] }}</td>
-          <td>{{ r['correct_year'] }}</td>
-          <td>{{ r['created_at'] }}</td>
+          <th>ID</th>
+          <th>Status</th>
+          <th>Question</th>
+          <th>Song</th>
+          <th>Artist</th>
+          <th>Year</th>
+          <th>Created</th>
         </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+      </thead>
+      <tbody>
+        {% for r in rounds %}
+          <tr>
+            <td>{{ r['id'] }}</td>
+            <td>{{ r['status'] }}</td>
+            <td>{{ r['question'] }}</td>
+            <td>{{ r['correct_song'] }}</td>
+            <td>{{ r['correct_artist'] }}</td>
+            <td>{{ r['correct_year'] }}</td>
+            <td>{{ r['created_at'] }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Reset game</h3>
+    <p>
+      This will delete <strong>all rounds</strong> and <strong>all guesses</strong>,
+      but keep the player list. Standings will return to zero.
+    </p>
+    <form method="post" onsubmit="return confirm('Reset the game? All rounds and guesses will be deleted.');">
+      <input type="hidden" name="action" value="reset_game">
+      <button type="submit" class="btn secondary">Reset game (keep players)</button>
+    </form>
+  </div>
+
+{% endif %}
+
 {% endblock %}
