@@ -5,11 +5,13 @@ from flask import (
     url_for, session, jsonify
 )
 
-# Use a fresh DB name to avoid old schema conflicts
+# ========= SETTINGS =========
 DB_PATH = Path("hitster.db")
+ADMIN_PASSWORD = "changeme"   # <<< CHANGE THIS to your own password
+# ============================
 
 
-# ---------- DB & helpers ----------
+# ---------- DB helpers ----------
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -88,16 +90,15 @@ def get_current_open_round():
 
 def score_hitster_round(cur, round_row):
     """
-    Score all guesses for a round using Hitster rules:
-    - Song: exact (case-insensitive) -> 5 pts
-    - Artist: exact -> 5 pts
-    - Year:
+    Hitster scoring:
+      Song:   exact (case-insensitive) -> 5 pts
+      Artist: exact                   -> 5 pts
+      Year:
         exact: 5
-        1 year off: 4
-        2 years off: 3
-        if ALL valid guesses are >=3 away:
-          closest diff -> 1
-          others -> 0
+        1 off: 4
+        2 off: 3
+        if all valid guesses are 3+ away:
+            closest diff -> 1, others -> 0
     """
     round_id = round_row["id"]
     correct_song = (round_row["correct_song"] or "").strip().lower()
@@ -109,7 +110,7 @@ def score_hitster_round(cur, round_row):
     except ValueError:
         correct_year = None
 
-    # Fetch all guesses for this round
+    # All guesses for this round
     cur.execute("""
         SELECT id, answer_song, answer_artist, answer_year
         FROM guesses
@@ -117,7 +118,7 @@ def score_hitster_round(cur, round_row):
     """, (round_id,))
     guesses = cur.fetchall()
 
-    # Compute year diffs for valid guesses
+    # Year differences
     diff_by_id = {}
     if correct_year is not None:
         for g in guesses:
@@ -147,12 +148,9 @@ def score_hitster_round(cur, round_row):
         artist_guess = (g["answer_artist"] or "").strip().lower()
         y_diff = diff_by_id.get(gid)
 
-        # Song
         score_song = 5 if correct_song and song_guess == correct_song else 0
-        # Artist
         score_artist = 5 if correct_artist and artist_guess == correct_artist else 0
 
-        # Year
         score_year = 0
         if correct_year is not None and y_diff is not None:
             if has_close:
@@ -163,7 +161,6 @@ def score_hitster_round(cur, round_row):
                 elif y_diff == 2:
                     score_year = 3
             else:
-                # all diffs >= 3; closest gets 1
                 if min_diff is not None and y_diff == min_diff:
                     score_year = 1
 
@@ -180,8 +177,7 @@ def score_hitster_round(cur, round_row):
 
 def create_app():
     app = Flask(__name__)
-    app.secret_key = "change-this-to-a-random-secret"
-
+    app.secret_key = "change-this-secret-too"  # <<< also change this
     init_db()
 
     @app.route("/", methods=["GET", "POST"])
@@ -295,13 +291,40 @@ def create_app():
 
     @app.route("/admin", methods=["GET", "POST"])
     def admin():
+        is_admin = session.get("is_admin", False)
+        error = None
+
+        # Not logged in as admin yet: handle login only
+        if not is_admin:
+            if request.method == "POST" and request.form.get("action") == "login":
+                pw = request.form.get("password", "")
+                if pw == ADMIN_PASSWORD:
+                    session["is_admin"] = True
+                    return redirect(url_for("admin"))
+                else:
+                    error = "Wrong password."
+            return render_template(
+                "admin.html",
+                is_admin=False,
+                error=error,
+                current_round=None,
+                rounds=[],
+                current_round_players=[]
+            )
+
+        # Already admin: handle admin actions
         conn = get_db()
         cur = conn.cursor()
 
         if request.method == "POST":
             action = request.form.get("action")
 
-            if action == "create_round":
+            if action == "logout_admin":
+                session.pop("is_admin", None)
+                conn.close()
+                return redirect(url_for("admin"))
+
+            elif action == "create_round":
                 question = request.form.get("question", "").strip()
                 correct_song = request.form.get("correct_song", "").strip()
                 correct_artist = request.form.get("correct_artist", "").strip()
@@ -342,15 +365,47 @@ def create_app():
                     )
                     conn.commit()
 
+            elif action == "reset_game":
+                # Delete all rounds and guesses, keep players
+                cur.execute("DELETE FROM guesses")
+                cur.execute("DELETE FROM rounds")
+                conn.commit()
+
+        # Fetch current open round
+        cur.execute(
+            "SELECT * FROM rounds WHERE status = 'open' ORDER BY id DESC LIMIT 1"
+        )
+        current_round = cur.fetchone()
+
+        # Fetch recent rounds
         cur.execute("SELECT * FROM rounds ORDER BY id DESC LIMIT 20")
         rounds = cur.fetchall()
+
+        # Fetch players + whether they answered this round
+        current_round_players = []
+        if current_round:
+            cur.execute("""
+                SELECT
+                    p.name,
+                    g.answer_song,
+                    g.answer_artist,
+                    g.answer_year
+                FROM players p
+                LEFT JOIN guesses g
+                  ON p.id = g.player_id AND g.round_id = ?
+                ORDER BY p.name
+            """, (current_round["id"],))
+            current_round_players = cur.fetchall()
+
         conn.close()
 
-        current_round = get_current_open_round()
         return render_template(
             "admin.html",
+            is_admin=True,
+            error=error,
             current_round=current_round,
-            rounds=rounds
+            rounds=rounds,
+            current_round_players=current_round_players
         )
 
     return app
