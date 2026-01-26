@@ -91,14 +91,21 @@ def get_current_open_round():
 def score_hitster_round(cur, round_row):
     """
     Hitster scoring:
+
       Song:   exact (case-insensitive) -> 5 pts
       Artist: exact                   -> 5 pts
-      Year:
-        exact: 5
-        1 off: 4
-        2 off: 3
-        if all valid guesses are 3+ away:
-            closest diff -> 1, others -> 0
+      Year (absolute difference in years):
+
+        diff = |guess - correct|
+
+        0       -> 10 pts
+        1       -> 8 pts
+        2       -> 6 pts
+        3–5     -> 4 pts
+        6–10    -> 2 pts
+        >10     -> -4 pts
+
+      If year cannot be parsed as int, year score = 0.
     """
     round_id = round_row["id"]
     correct_song = (round_row["correct_song"] or "").strip().lower()
@@ -118,51 +125,40 @@ def score_hitster_round(cur, round_row):
     """, (round_id,))
     guesses = cur.fetchall()
 
-    # Year differences
-    diff_by_id = {}
-    if correct_year is not None:
-        for g in guesses:
-            ys = (g["answer_year"] or "").strip()
-            try:
-                y = int(ys)
-                diff_by_id[g["id"]] = abs(y - correct_year)
-            except ValueError:
-                diff_by_id[g["id"]] = None
-    else:
-        for g in guesses:
-            diff_by_id[g["id"]] = None
-
-    valid_diffs = [d for d in diff_by_id.values() if d is not None]
-    has_close = False
-    min_diff = None
-
-    if correct_year is not None and valid_diffs:
-        has_close = any(d <= 2 for d in valid_diffs)
-        if not has_close:
-            min_diff = min(valid_diffs)
-
-    # Score each guess
     for g in guesses:
         gid = g["id"]
         song_guess = (g["answer_song"] or "").strip().lower()
         artist_guess = (g["answer_artist"] or "").strip().lower()
-        y_diff = diff_by_id.get(gid)
+        year_guess_str = (g["answer_year"] or "").strip()
 
+        # Song
         score_song = 5 if correct_song and song_guess == correct_song else 0
+
+        # Artist
         score_artist = 5 if correct_artist and artist_guess == correct_artist else 0
 
+        # Year
         score_year = 0
-        if correct_year is not None and y_diff is not None:
-            if has_close:
-                if y_diff == 0:
-                    score_year = 5
-                elif y_diff == 1:
+        if correct_year is not None and year_guess_str:
+            try:
+                guess_year = int(year_guess_str)
+                diff = abs(guess_year - correct_year)
+
+                if diff == 0:
+                    score_year = 10
+                elif diff == 1:
+                    score_year = 8
+                elif diff == 2:
+                    score_year = 6
+                elif 3 <= diff <= 5:
                     score_year = 4
-                elif y_diff == 2:
-                    score_year = 3
-            else:
-                if min_diff is not None and y_diff == min_diff:
-                    score_year = 1
+                elif 6 <= diff <= 10:
+                    score_year = 2
+                else:  # diff > 10
+                    score_year = -4
+            except ValueError:
+                # Non-numeric year: no year score
+                score_year = 0
 
         total = score_song + score_artist + score_year
 
