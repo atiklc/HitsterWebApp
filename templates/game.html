@@ -1,38 +1,68 @@
 {% extends "base.html" %}
 
 {% block head_extra %}
+<style>
+  .trend-up {
+    color: #00c853;   /* green */
+  }
+  .trend-down {
+    color: #ff5252;   /* red */
+  }
+  .trend-same {
+    color: #ffffff;   /* white text */
+    background-color: #555555;
+    padding: 2px 6px;
+    border-radius: 8px;
+    display: inline-block;
+  }
+</style>
 <script>
-  // Jinja sets whether we should auto-reload the page
-  var shouldAutoReload = {{ 'true' if (not current_round) or already_answered else 'false' }};
-
   async function loadStandings() {
     try {
       const res = await fetch("{{ url_for('api_standings') }}");
       const data = await res.json();
       const tbody = document.getElementById("standings-body");
+      if (!tbody) return;  // safety
       tbody.innerHTML = "";
-      data.forEach((row, index) => {
+
+      data.forEach((row) => {
+        let trendClass = "trend-same";
+        let trendSymbol = "•";
+        let deltaText = row.delta;
+
+        if (row.delta > 0) {
+          trendClass = "trend-up";
+          trendSymbol = "▲";
+          deltaText = "+" + row.delta;
+        } else if (row.delta < 0) {
+          trendClass = "trend-down";
+          trendSymbol = "▼";
+          // negative as-is
+        } else {
+          trendClass = "trend-same";
+          trendSymbol = "•";
+          deltaText = "0";
+        }
+
         const tr = document.createElement("tr");
         tr.innerHTML = `
-          <td>${index + 1}</td>
+          <td>${row.rank}</td>
           <td>${row.player}</td>
           <td>${row.score}</td>
+          <td><span class="${trendClass}">${trendSymbol} ${deltaText}</span></td>
         `;
         tbody.appendChild(tr);
       });
     } catch (e) {
-      console.error("Error loading standings", e);
+      console.error("Error loading standings in game page", e);
     }
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    loadStandings();
-    setInterval(loadStandings, 3000); // refresh standings every 3s
-
-    if (shouldAutoReload) {
-      setInterval(() => {
-        window.location.reload();
-      }, 5000); // check for new round every 5s
+    // only load if the standings table is present
+    if (document.getElementById("standings-body")) {
+      loadStandings();
+      setInterval(loadStandings, 3000);
     }
   });
 </script>
@@ -40,44 +70,46 @@
 
 {% block content %}
 <div class="card">
-  <h2>Hello, {{ player['name'] }}</h2>
+  <h2>Hi, {{ player['name'] }}!</h2>
 
   {% if not current_round %}
-    <p>No active song yet. Please wait for the host to start a Hitster round.</p>
+    <p>No open round at the moment. Please wait for the host to start a new song.</p>
   {% else %}
-    <h3>Current song</h3>
-    <p>{{ current_round['question'] }}</p>
+    <h3>Current round</h3>
+    <p><strong>{{ current_round['question'] }}</strong></p>
+
+    {% if error %}
+      <p style="color:#ff5252;">{{ error }}</p>
+    {% endif %}
 
     {% if already_answered %}
-      <p><strong>You have already submitted your guess for this song.</strong></p>
+      <p>You have already submitted your answer for this round. 🎧</p>
     {% else %}
-      {% if error %}
-        <div class="error">{{ error }}</div>
-      {% endif %}
       <form method="post">
-        <label>Song title</label>
+        <label>Song</label>
         <input type="text" name="answer_song" placeholder="Song title">
 
         <label>Artist</label>
         <input type="text" name="answer_artist" placeholder="Artist">
 
         <label>Year</label>
-        <input type="text" name="answer_year" placeholder="Year (e.g. 1976)">
+        <input type="text" name="answer_year" placeholder="e.g. 1998">
 
-        <button type="submit" class="btn">Submit guess</button>
+        <button type="submit" class="btn">Submit answer</button>
       </form>
     {% endif %}
   {% endif %}
 </div>
 
 <div class="card">
-  <h2>Live Standings</h2>
+  <h2>Standings</h2>
   <table>
     <thead>
       <tr>
         <th>Rank</th>
         <th>Player</th>
         <th>Points</th>
+        <th>Change</th>
       </tr>
     </thead>
     <tbody id="standings-body">
