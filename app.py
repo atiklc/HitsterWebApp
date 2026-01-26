@@ -397,8 +397,7 @@ def create_app():
         conn.close()
         return jsonify(data)
 
-        @app.route("/api/last_round_answers")
-    
+    @app.route("/api/last_round_answers")
     def api_last_round_answers():
         conn = get_db()
         cur = conn.cursor()
