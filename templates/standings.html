@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 
 {% block head_extra %}
+<style>
+  .trend-up {
+    color: #00c853;   /* green */
+  }
+  .trend-down {
+    color: #ff5252;   /* red */
+  }
+  .trend-same {
+    color: #ffffff;   /* white / neutral, adjust if your bg is light */
+  }
+</style>
 <script>
   async function loadStandings() {
     try {
@@ -8,12 +19,25 @@
       const data = await res.json();
       const tbody = document.getElementById("standings-body");
       tbody.innerHTML = "";
-      data.forEach((row, index) => {
+
+      data.forEach((row) => {
+        let trendClass = "trend-same";
+        let trendSymbol = "■";
+
+        if (row.delta > 0) {
+          trendClass = "trend-up";
+          trendSymbol = "▲";
+        } else if (row.delta < 0) {
+          trendClass = "trend-down";
+          trendSymbol = "▼";
+        }
+
         const tr = document.createElement("tr");
         tr.innerHTML = `
-          <td>${index + 1}</td>
+          <td>${row.rank}</td>
           <td>${row.player}</td>
           <td>${row.score}</td>
+          <td class="${trendClass}">${trendSymbol} ${row.delta}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -24,20 +48,21 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     loadStandings();
-    setInterval(loadStandings, 3000); // refresh every 3s
+    setInterval(loadStandings, 3000); // update every 3 s
   });
 </script>
 {% endblock %}
 
 {% block content %}
 <div class="card">
-  <h2>Live Standings</h2>
+  <h2>Standings</h2>
   <table>
     <thead>
       <tr>
         <th>Rank</th>
         <th>Player</th>
         <th>Points</th>
+        <th>Change</th>
       </tr>
     </thead>
     <tbody id="standings-body">
