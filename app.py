@@ -7,7 +7,7 @@ from flask import (
 
 # ========= SETTINGS =========
 DB_PATH = Path("hitster.db")
-ADMIN_PASSWORD = "1234567890"   # <<< CHANGE THIS to your own password
+ADMIN_PASSWORD = "changeme"   # <<< CHANGE THIS in real use
 # ============================
 
 
@@ -37,7 +37,7 @@ def init_db():
         correct_song TEXT,
         correct_artist TEXT,
         correct_year TEXT,
-        status TEXT NOT NULL,         -- 'open' or 'closed'
+        status TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
@@ -58,6 +58,19 @@ def init_db():
         UNIQUE(player_id, round_id),
         FOREIGN KEY(player_id) REFERENCES players(id),
         FOREIGN KEY(round_id) REFERENCES rounds(id)
+    )
+    """)
+
+    # New: snapshot of standings after each closed round
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS round_standings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        round_id INTEGER NOT NULL,
+        player_id INTEGER NOT NULL,
+        rank INTEGER NOT NULL,
+        total_score INTEGER NOT NULL,
+        FOREIGN KEY(round_id) REFERENCES rounds(id),
+        FOREIGN KEY(player_id) REFERENCES players(id)
     )
     """)
 
@@ -157,7 +170,6 @@ def score_hitster_round(cur, round_row):
                 else:  # diff > 10
                     score_year = -4
             except ValueError:
-                # Non-numeric year: no year score
                 score_year = 0
 
         total = score_song + score_artist + score_year
@@ -169,16 +181,42 @@ def score_hitster_round(cur, round_row):
         """, (score_song, score_artist, score_year, total, gid))
 
 
-# ---------- App factory & routes ----------
+def snapshot_standings(cur, round_id):
+    """
+    Store a snapshot of standings after closing a round.
+    Uses cumulative total_score across all guesses for each player.
+    """
+    # Remove any existing snapshot for this round (safety)
+    cur.execute("DELETE FROM round_standings WHERE round_id = ?", (round_id,))
+
+    # Compute current cumulative standings
+    cur.execute("""
+        SELECT
+            p.id AS player_id,
+            COALESCE(SUM(g.total_score), 0) AS total_score
+        FROM players p
+        LEFT JOIN guesses g ON p.id = g.player_id
+        GROUP BY p.id
+        ORDER BY total_score DESC, p.name ASC
+    """)
+    rows = cur.fetchall()
+
+    rank = 1
+    for r in rows:
+        cur.execute("""
+            INSERT INTO round_standings(round_id, player_id, rank, total_score)
+            VALUES (?, ?, ?, ?)
+        """, (round_id, r["player_id"], rank, r["total_score"]))
+        rank += 1
+
 
 def create_app():
     app = Flask(__name__)
-    app.secret_key = "change-this-secret-too"  # <<< also change this
+    app.secret_key = "change-this-secret-too"  # <<< change this as well
     init_db()
 
     @app.route("/", methods=["GET", "POST"])
     def index():
-        # Join / choose player name
         if request.method == "POST":
             name = request.form.get("player_name", "").strip()
             if not name:
@@ -268,21 +306,95 @@ def create_app():
 
     @app.route("/api/standings")
     def api_standings():
+        """
+        Returns JSON:
+        [
+          {"player": "...", "score": 42, "rank": 1, "delta": +1},
+          ...
+        ]
+
+        - rank  = current rank after last closed round
+        - delta = (previous_rank - current_rank)
+                  >0  => moved UP (better)
+                  <0  => moved DOWN
+                  0   => same / new
+        """
         conn = get_db()
         cur = conn.cursor()
+
+        # Try to use snapshots from last closed round(s)
         cur.execute("""
-            SELECT p.name, COALESCE(SUM(g.total_score), 0) AS total_score
-            FROM players p
-            LEFT JOIN guesses g ON p.id = g.player_id
-            GROUP BY p.id
-            ORDER BY total_score DESC, p.name ASC
+            SELECT DISTINCT round_id
+            FROM round_standings
+            ORDER BY round_id DESC
+            LIMIT 2
         """)
-        rows = cur.fetchall()
+        round_rows = cur.fetchall()
+
+        data = []
+
+        if round_rows:
+            latest_round_id = round_rows[0]["round_id"]
+            prev_round_id = round_rows[1]["round_id"] if len(round_rows) > 1 else None
+
+            # Current standings from latest snapshot
+            cur.execute("""
+                SELECT rs.player_id, rs.rank, rs.total_score, p.name
+                FROM round_standings rs
+                JOIN players p ON p.id = rs.player_id
+                WHERE rs.round_id = ?
+                ORDER BY rs.rank ASC
+            """, (latest_round_id,))
+            current_rows = cur.fetchall()
+
+            prev_ranks = {}
+            if prev_round_id is not None:
+                cur.execute("""
+                    SELECT player_id, rank
+                    FROM round_standings
+                    WHERE round_id = ?
+                """, (prev_round_id,))
+                for r in cur.fetchall():
+                    prev_ranks[r["player_id"]] = r["rank"]
+
+            for r in current_rows:
+                pid = r["player_id"]
+                current_rank = r["rank"]
+                prev_rank = prev_ranks.get(pid)
+                if prev_rank is None:
+                    delta = 0  # treat as no change / new
+                else:
+                    # Positive delta means moved UP (towards rank 1)
+                    delta = prev_rank - current_rank
+
+                data.append({
+                    "player": r["name"],
+                    "score": r["total_score"],
+                    "rank": current_rank,
+                    "delta": delta
+                })
+
+        else:
+            # No snapshots yet: fall back to live cumulative standings
+            cur.execute("""
+                SELECT p.name, COALESCE(SUM(g.total_score), 0) AS total_score
+                FROM players p
+                LEFT JOIN guesses g ON p.id = g.player_id
+                GROUP BY p.id
+                ORDER BY total_score DESC, p.name ASC
+            """)
+            rows = cur.fetchall()
+            rank = 1
+            for r in rows:
+                data.append({
+                    "player": r["name"],
+                    "score": r["total_score"],
+                    "rank": rank,
+                    "delta": 0
+                })
+                rank += 1
+
         conn.close()
-        data = [
-            {"player": r["name"], "score": r["total_score"]}
-            for r in rows
-        ]
         return jsonify(data)
 
     @app.route("/admin", methods=["GET", "POST"])
@@ -290,7 +402,6 @@ def create_app():
         is_admin = session.get("is_admin", False)
         error = None
 
-        # Not logged in as admin yet: handle login only
         if not is_admin:
             if request.method == "POST" and request.form.get("action") == "login":
                 pw = request.form.get("password", "")
@@ -308,7 +419,6 @@ def create_app():
                 current_round_players=[]
             )
 
-        # Already admin: handle admin actions
         conn = get_db()
         cur = conn.cursor()
 
@@ -354,15 +464,20 @@ def create_app():
                 )
                 round_row = cur.fetchone()
                 if round_row:
+                    # 1) score the round
                     score_hitster_round(cur, round_row)
+                    # 2) mark closed
                     cur.execute(
                         "UPDATE rounds SET status = 'closed' WHERE id = ?",
                         (round_row["id"],)
                     )
+                    # 3) snapshot standings
+                    snapshot_standings(cur, round_row["id"])
                     conn.commit()
 
             elif action == "reset_game":
-                # Delete all rounds and guesses, keep players
+                # Delete all rounds, guesses, and snapshots; keep players
+                cur.execute("DELETE FROM round_standings")
                 cur.execute("DELETE FROM guesses")
                 cur.execute("DELETE FROM rounds")
                 conn.commit()
