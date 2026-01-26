@@ -397,6 +397,68 @@ def create_app():
         conn.close()
         return jsonify(data)
 
+        @app.route("/api/last_round_answers")
+    
+    def api_last_round_answers():
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT id, question, correct_song, correct_artist, correct_year
+            FROM rounds
+            WHERE status = 'closed'
+            ORDER BY id DESC
+            LIMIT 1
+        """)
+        round_row = cur.fetchone()
+
+        if not round_row:
+            conn.close()
+            return jsonify({"round": None, "answers": []})
+
+        round_id = round_row["id"]
+
+        cur.execute("""
+            SELECT
+                p.name AS player,
+                g.answer_song,
+                g.answer_artist,
+                g.answer_year,
+                g.score_song,
+                g.score_artist,
+                g.score_year,
+                g.total_score
+            FROM players p
+            LEFT JOIN guesses g
+              ON p.id = g.player_id AND g.round_id = ?
+            ORDER BY p.name
+        """, (round_id,))
+        rows = cur.fetchall()
+        conn.close()
+
+        answers = []
+        for r in rows:
+            answers.append({
+                "player": r["player"],
+                "song": r["answer_song"] or "",
+                "artist": r["answer_artist"] or "",
+                "year": r["answer_year"] or "",
+                "score_song": r["score_song"] if r["score_song"] is not None else 0,
+                "score_artist": r["score_artist"] if r["score_artist"] is not None else 0,
+                "score_year": r["score_year"] if r["score_year"] is not None else 0,
+                "total_score": r["total_score"] if r["total_score"] is not None else 0
+            })
+
+        round_info = {
+            "id": round_row["id"],
+            "question": round_row["question"],
+            "correct_song": round_row["correct_song"] or "",
+            "correct_artist": round_row["correct_artist"] or "",
+            "correct_year": round_row["correct_year"] or ""
+        }
+
+        return jsonify({"round": round_info, "answers": answers})
+    
     @app.route("/admin", methods=["GET", "POST"])
     def admin():
         is_admin = session.get("is_admin", False)
