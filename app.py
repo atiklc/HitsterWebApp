@@ -7,7 +7,7 @@ from flask import (
 
 # ========= SETTINGS =========
 DB_PATH = Path("hitster.db")
-ADMIN_PASSWORD = "changeme"   # <<< CHANGE THIS in real use
+ADMIN_PASSWORD = "0987654321"   # <<< CHANGE THIS in real use
 # ============================
 
 
