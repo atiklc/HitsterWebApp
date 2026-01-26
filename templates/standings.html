@@ -3,13 +3,17 @@
 {% block head_extra %}
 <style>
   .trend-up {
-    color: #00c853;   /* green */
+    color: #00c853;   /* green - same as Giga */
   }
   .trend-down {
-    color: #ff5252;   /* red */
+    color: #ff5252;   /* red - same as Giga */
   }
   .trend-same {
-    color: #666666;   /* grey, visible on white background */
+    color: #ffffff;   /* white text */
+    background-color: #555555;  /* dark bg so white is visible */
+    padding: 2px 6px;
+    border-radius: 8px;
+    display: inline-block;
   }
 
   .answers-table th,
@@ -33,13 +37,20 @@
       data.forEach((row) => {
         let trendClass = "trend-same";
         let trendSymbol = "•";
+        let deltaText = row.delta;
 
         if (row.delta > 0) {
           trendClass = "trend-up";
           trendSymbol = "▲";
+          deltaText = "+" + row.delta;
         } else if (row.delta < 0) {
           trendClass = "trend-down";
           trendSymbol = "▼";
+          // deltaText already negative
+        } else {
+          trendClass = "trend-same";
+          trendSymbol = "•";
+          deltaText = "0";
         }
 
         const tr = document.createElement("tr");
@@ -47,9 +58,7 @@
           <td>${row.rank}</td>
           <td>${row.player}</td>
           <td>${row.score}</td>
-          <td class="${trendClass}">
-            ${trendSymbol} ${row.delta > 0 ? "+" + row.delta : row.delta}
-          </td>
+          <td><span class="${trendClass}">${trendSymbol} ${deltaText}</span></td>
         `;
         tbody.appendChild(tr);
       });
@@ -63,17 +72,17 @@
       const res = await fetch("{{ url_for('api_last_round_answers') }}");
       const data = await res.json();
 
-      const roundTitle = document.getElementById("round-title");
-      const correctSong = document.getElementById("correct-song");
-      const correctArtist = document.getElementById("correct-artist");
-      const correctYear = document.getElementById("correct-year");
-      const answersBody = document.getElementById("answers-body");
+      const roundTitle   = document.getElementById("round-title");
+      const correctSong  = document.getElementById("correct-song");
+      const correctArtist= document.getElementById("correct-artist");
+      const correctYear  = document.getElementById("correct-year");
+      const answersBody  = document.getElementById("answers-body");
 
       answersBody.innerHTML = "";
-      correctSong.textContent = "";
+      correctSong.textContent   = "";
       correctArtist.textContent = "";
-      correctYear.textContent = "";
-      roundTitle.textContent = "Last closed round";
+      correctYear.textContent   = "";
+      roundTitle.textContent    = "Last closed round";
 
       if (!data.round) {
         roundTitle.textContent = "No closed rounds yet";
@@ -83,9 +92,9 @@
       const r = data.round;
 
       roundTitle.textContent = `Round #${r.id}: ${r.question}`;
-      correctSong.textContent = r.correct_song || "-";
+      correctSong.textContent   = r.correct_song   || "-";
       correctArtist.textContent = r.correct_artist || "-";
-      correctYear.textContent = r.correct_year || "-";
+      correctYear.textContent   = r.correct_year   || "-";
 
       data.answers.forEach((row) => {
         const tr = document.createElement("tr");
@@ -129,7 +138,7 @@
       </tr>
     </thead>
     <tbody id="standings-body">
-      <!-- filled by JS -->
+      <!-- JS fills -->
     </tbody>
   </table>
 </div>
@@ -157,7 +166,7 @@
       </tr>
     </thead>
     <tbody id="answers-body">
-      <!-- filled by JS -->
+      <!-- JS fills -->
     </tbody>
   </table>
 </div>
