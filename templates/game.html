@@ -1,111 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="grid">
-  <div class="card">
-    <h2>Play</h2>
+<div class="card">
+  <h2>Game</h2>
 
-    {% if not open_round %}
-      <div class="alert">No open round right now. Refresh soon 🕒</div>
-    {% else %}
-      <div class="pill">Round #{{ open_round["id"] }}</div>
-      <p><strong>{{ open_round["question"] or "New round" }}</strong></p>
+  {% if open_round %}
+    <p><strong>Open round:</strong> #{{ open_round["id"] }}</p>
+    <p><strong>Question:</strong> {{ open_round["question"] or "-" }}</p>
 
-      {% if my_submitted %}
-        <div class="alert success">Submitted ✅ You can update and submit again.</div>
-      {% endif %}
+    <form method="post" action="{{ url_for('submit') }}">
+      <label>Song</label>
+      <input type="text" name="guess_song">
 
-      <form method="post" action="{{ url_for('submit') }}">
-        <label>Song</label>
-        <input type="text" name="guess_song" value="{{ my_guess['guess_song'] if my_guess else '' }}" />
+      <label>Artist</label>
+      <input type="text" name="guess_artist">
 
-        <label>Artist</label>
-        <input type="text" name="guess_artist" value="{{ my_guess['guess_artist'] if my_guess else '' }}" />
+      <label>Year</label>
+      <input type="number" name="guess_year">
 
-        <label>Year</label>
-        <input type="number" name="guess_year" value="{{ my_guess['guess_year'] if my_guess else '' }}" />
+      <button class="btn" type="submit">Submit</button>
+    </form>
+  {% else %}
+    <p>No open round right now.</p>
+  {% endif %}
 
-        <button class="btn" type="submit">Submit</button>
-      </form>
-    {% endif %}
+  <hr>
 
-    <div class="muted" style="margin-top:10px;">
-      <a href="{{ url_for('logout') }}">Change player</a>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Standings</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Player</th>
-          <th>Pts</th>
-          <th>Δ</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for s in standings %}
-        <tr>
-          <td>{{ s.rank }}</td>
-          <td>{{ s.player }}</td>
-          <td>{{ s.points }}</td>
-          <td class="
-            {% if s.delta > 0 %}delta-up{% elif s.delta < 0 %}delta-down{% else %}delta-same{% endif %}
-          ">
-            {% if s.delta > 0 %}+{{ s.delta }}{% elif s.delta < 0 %}{{ s.delta }}{% else %}0{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-
-    {% if last_round %}
-      <hr />
-      <h3>Last round</h3>
-      <p class="muted">
-        <strong>{{ last_round["question"] }}</strong><br>
-        Correct: {{ last_round["correct_song"] or "-" }} | {{ last_round["correct_artist"] or "-" }} | {{ last_round["correct_year"] or "-" }}
-      </p>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Player</th>
-            <th>Song</th>
-            <th>Artist</th>
-            <th>Year</th>
-            <th>Pts</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for g in last_guesses %}
-          <tr>
-            <td>{{ g["player"] }}</td>
-            <td>{{ g["guess_song"] or "-" }}</td>
-            <td>{{ g["guess_artist"] or "-" }}</td>
-            <td>{{ g["guess_year"] or "-" }}</td>
-            <td>{{ g["total_points"] }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% endif %}
-  </div>
+  <p><a href="{{ url_for('standings_page') }}">Standings</a></p>
+  <p><a href="{{ url_for('logout') }}">Change player</a></p>
 </div>
-
-<script>
-  // Auto-detect a new round (safe, light polling)
-  const currentOpen = {{ open_round["id"] if open_round else "null" }};
-  async function pollState() {
-    try {
-      const r = await fetch("/api/state", { cache: "no-store" });
-      const data = await r.json();
-      if (data.open_round_id !== currentOpen) {
-        location.reload();
-      }
-    } catch (e) {}
-  }
-  setInterval(pollState, 5000);
-</script>
 {% endblock %}
