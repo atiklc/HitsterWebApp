@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+  <h2>Register</h2>
+
+  {% if error %}
+    <p style="color:#ff5252;">{{ error }}</p>
+  {% endif %}
+
+  <form method="post">
+    <label>Player name</label>
+    <input type="text" name="name" placeholder="e.g. Ham Hum Şaralop" required>
+
+    <label>Email (optional)</label>
+    <input type="email" name="email" placeholder="name@example.com">
+
+    <button type="submit" class="btn">Enter game</button>
+  </form>
+
+  <p style="margin-top:12px; opacity:0.8;">
+    If you already registered before, enter the same player name to continue.
+  </p>
+</div>
+{% endblock %}
