@@ -1,120 +1,111 @@
 {% extends "base.html" %}
-
-{% block head_extra %}
-<style>
-  .trend-up {
-    color: #00c853;   /* green */
-  }
-  .trend-down {
-    color: #ff5252;   /* red */
-  }
-  .trend-same {
-    color: #ffffff;   /* white text */
-    background-color: #555555;
-    padding: 2px 6px;
-    border-radius: 8px;
-    display: inline-block;
-  }
-</style>
-<script>
-  async function loadStandings() {
-    try {
-      const res = await fetch("{{ url_for('api_standings') }}");
-      const data = await res.json();
-      const tbody = document.getElementById("standings-body");
-      if (!tbody) return;  // safety
-      tbody.innerHTML = "";
-
-      data.forEach((row) => {
-        let trendClass = "trend-same";
-        let trendSymbol = "•";
-        let deltaText = row.delta;
-
-        if (row.delta > 0) {
-          trendClass = "trend-up";
-          trendSymbol = "▲";
-          deltaText = "+" + row.delta;
-        } else if (row.delta < 0) {
-          trendClass = "trend-down";
-          trendSymbol = "▼";
-          // negative as-is
-        } else {
-          trendClass = "trend-same";
-          trendSymbol = "•";
-          deltaText = "0";
-        }
-
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${row.rank}</td>
-          <td>${row.player}</td>
-          <td>${row.score}</td>
-          <td><span class="${trendClass}">${trendSymbol} ${deltaText}</span></td>
-        `;
-        tbody.appendChild(tr);
-      });
-    } catch (e) {
-      console.error("Error loading standings in game page", e);
-    }
-  }
-
-  document.addEventListener("DOMContentLoaded", () => {
-    // only load if the standings table is present
-    if (document.getElementById("standings-body")) {
-      loadStandings();
-      setInterval(loadStandings, 3000);
-    }
-  });
-</script>
-{% endblock %}
-
 {% block content %}
-<div class="card">
-  <h2>Hi, {{ player['name'] }}!</h2>
+<div class="grid">
+  <div class="card">
+    <h2>Play</h2>
 
-  {% if not current_round %}
-    <p>No open round at the moment. Please wait for the host to start a new song.</p>
-  {% else %}
-    <h3>Current round</h3>
-    <p><strong>{{ current_round['question'] }}</strong></p>
-
-    {% if error %}
-      <p style="color:#ff5252;">{{ error }}</p>
-    {% endif %}
-
-    {% if already_answered %}
-      <p>You have already submitted your answer for this round. 🎧</p>
+    {% if not open_round %}
+      <div class="alert">No open round right now. Refresh soon 🕒</div>
     {% else %}
-      <form method="post">
+      <div class="pill">Round #{{ open_round["id"] }}</div>
+      <p><strong>{{ open_round["question"] or "New round" }}</strong></p>
+
+      {% if my_submitted %}
+        <div class="alert success">Submitted ✅ You can update and submit again.</div>
+      {% endif %}
+
+      <form method="post" action="{{ url_for('submit') }}">
         <label>Song</label>
-        <input type="text" name="answer_song" placeholder="Song title">
+        <input type="text" name="guess_song" value="{{ my_guess['guess_song'] if my_guess else '' }}" />
 
         <label>Artist</label>
-        <input type="text" name="answer_artist" placeholder="Artist">
+        <input type="text" name="guess_artist" value="{{ my_guess['guess_artist'] if my_guess else '' }}" />
 
         <label>Year</label>
-        <input type="text" name="answer_year" placeholder="e.g. 1998">
+        <input type="number" name="guess_year" value="{{ my_guess['guess_year'] if my_guess else '' }}" />
 
-        <button type="submit" class="btn">Submit answer</button>
+        <button class="btn" type="submit">Submit</button>
       </form>
     {% endif %}
-  {% endif %}
+
+    <div class="muted" style="margin-top:10px;">
+      <a href="{{ url_for('logout') }}">Change player</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Standings</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Player</th>
+          <th>Pts</th>
+          <th>Δ</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in standings %}
+        <tr>
+          <td>{{ s.rank }}</td>
+          <td>{{ s.player }}</td>
+          <td>{{ s.points }}</td>
+          <td class="
+            {% if s.delta > 0 %}delta-up{% elif s.delta < 0 %}delta-down{% else %}delta-same{% endif %}
+          ">
+            {% if s.delta > 0 %}+{{ s.delta }}{% elif s.delta < 0 %}{{ s.delta }}{% else %}0{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if last_round %}
+      <hr />
+      <h3>Last round</h3>
+      <p class="muted">
+        <strong>{{ last_round["question"] }}</strong><br>
+        Correct: {{ last_round["correct_song"] or "-" }} | {{ last_round["correct_artist"] or "-" }} | {{ last_round["correct_year"] or "-" }}
+      </p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th>Song</th>
+            <th>Artist</th>
+            <th>Year</th>
+            <th>Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in last_guesses %}
+          <tr>
+            <td>{{ g["player"] }}</td>
+            <td>{{ g["guess_song"] or "-" }}</td>
+            <td>{{ g["guess_artist"] or "-" }}</td>
+            <td>{{ g["guess_year"] or "-" }}</td>
+            <td>{{ g["total_points"] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
 </div>
 
-<div class="card">
-  <h2>Standings</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Rank</th>
-        <th>Player</th>
-        <th>Points</th>
-        <th>Change</th>
-      </tr>
-    </thead>
-    <tbody id="standings-body">
-      <!-- filled by JS -->
-    </tbody>
-  </table>
-</div>
+<script>
+  // Auto-detect a new round (safe, light polling)
+  const currentOpen = {{ open_round["id"] if open_round else "null" }};
+  async function pollState() {
+    try {
+      const r = await fetch("/api/state", { cache: "no-store" });
+      const data = await r.json();
+      if (data.open_round_id !== currentOpen) {
+        location.reload();
+      }
+    } catch (e) {}
+  }
+  setInterval(pollState, 5000);
+</script>
 {% endblock %}
