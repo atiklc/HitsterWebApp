@@ -33,8 +33,10 @@
 
   <!-- Scoring mode selection -->
   <div class="card">
-    <h3>Scoring mode</h3>
-    <p>Current mode: <strong>{{ difficulty|capitalize }}</strong></p>
+  <h3>Scoring mode</h3>
+  <p>Current mode: <strong>{{ difficulty|capitalize }}</strong></p>
+
+  {% if not difficulty_locked %}
     <form method="post">
       <input type="hidden" name="action" value="set_difficulty">
 
@@ -58,7 +60,13 @@
 
       <button type="submit" class="btn">Save scoring mode</button>
     </form>
-  </div>
+  {% else %}
+    <p>
+      Difficulty is <strong>locked</strong> for this game.<br>
+      To change it, reset the game and set difficulty again before creating the first round.
+    </p>
+  {% endif %}
+</div>
 
   <!-- Create/open round -->
   <div class="card">
