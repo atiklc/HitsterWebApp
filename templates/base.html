@@ -1,111 +1,61 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>{{ title or "Guess Game" }}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hitster</title>
   <style>
-    body {
-      margin: 0;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f3f4f6;
-      color: #111827;
-    }
-    header {
-      background: #111827;
-      color: #f9fafb;
-      padding: 10px 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    header a {
-      color: #9ca3af;
-      text-decoration: none;
-      margin-left: 12px;
-      font-size: 14px;
-    }
-    header a:hover {
-      color: #f9fafb;
-    }
-    .container {
-      max-width: 900px;
-      margin: 16px auto;
-      padding: 0 12px;
-    }
-    .card {
-      background: #ffffff;
-      border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-      padding: 16px;
-      margin-bottom: 16px;
-    }
-    .card h1, .card h2, .card h3 {
-      margin-top: 0;
-    }
-    .btn {
-      display: inline-block;
-      padding: 8px 14px;
-      border-radius: 4px;
-      border: none;
-      background: #2563eb;
-      color: #ffffff;
-      font-size: 14px;
-      cursor: pointer;
-    }
-    .btn.secondary {
-      background: #6b7280;
-    }
-    .btn:disabled {
-      opacity: 0.6;
-      cursor: default;
-    }
-    input[type=text], textarea {
-      width: 100%;
-      padding: 8px;
-      font-size: 14px;
-      border-radius: 4px;
-      border: 1px solid #d1d5db;
-      box-sizing: border-box;
-      margin-bottom: 8px;
-    }
-    .error {
-      color: #b91c1c;
-      font-size: 13px;
-      margin-bottom: 8px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 8px;
-    }
-    th, td {
-      padding: 6px 8px;
-      border-bottom: 1px solid #e5e7eb;
-      text-align: left;
-      font-size: 14px;
-    }
-    th {
-      background: #f3f4f6;
-      font-weight: 600;
-    }
-    tr:nth-child(even) td {
-      background: #f9fafb;
-    }
+    :root { color-scheme: dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 0; background:#0b0d10; color:#eef2f7; }
+    a { color:#9fd3ff; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .card { background:#121620; border:1px solid #232a3a; border-radius:14px; padding:16px; margin-bottom:16px; box-shadow: 0 10px 20px rgba(0,0,0,.25); }
+    .grid { display:grid; grid-template-columns: 1fr; gap: 16px; }
+    @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
+    label { display:block; margin:10px 0 6px; color:#cdd6e5; font-size: 14px; }
+    input, textarea, select { width:100%; padding:10px; border-radius:10px; border:1px solid #2a3347; background:#0f1320; color:#eef2f7; }
+    .btn { padding:10px 14px; border-radius:10px; border:1px solid #2a3347; background:#1b5cff; color:white; cursor:pointer; font-weight:600; }
+    .btn.secondary { background:#1a2336; }
+    .btn.danger { background:#b61d2a; border-color:#7e141d; }
+    .muted { color:#9aa6bc; font-size: 13px; }
+    table { width:100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border-bottom:1px solid #232a3a; padding:8px; text-align:left; vertical-align: top; }
+    th { color:#b9c5dc; font-size: 13px; }
+    .alert { padding:10px; border-radius:10px; background:#1a2336; border:1px solid #2a3347; margin:10px 0; }
+    .alert.success { background:#0f2a19; border-color:#1f6a3b; }
+    .alert.error { background:#2a0f14; border-color:#7e141d; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; background:#1a2336; border:1px solid #2a3347; color:#b9c5dc; font-size:12px; }
+    .row { display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; }
+    .delta-up { color:#35d07f; font-weight:700; }
+    .delta-down { color:#ff5b6e; font-weight:700; }
+    .delta-same { color:#eef2f7; opacity:.9; }
   </style>
-  {% block head_extra %}{% endblock %}
 </head>
 <body>
-  <header>
-    <div><strong>Guess Game</strong></div>
-    <nav>
-      <a href="{{ url_for('game') }}">Play</a>
-      <a href="{{ url_for('standings') }}">Standings</a>
-      <a href="{{ url_for('admin') }}">Admin</a>
-    </nav>
-  </header>
-  <div class="container">
-    {% block content %}{% endblock %}
+  <div class="wrap">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="card">
+          {% for cat,msg in messages %}
+            <div class="alert {% if cat=='success' %}success{% elif cat=='error' %}error{% endif %}">{{ msg }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% if show_login %}
+      <div class="card">
+        <h2>Admin login</h2>
+        {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+        <form method="post">
+          <label>Password</label>
+          <input type="password" name="password" required />
+          <button class="btn" type="submit">Login</button>
+        </form>
+      </div>
+    {% else %}
+      {% block content %}{% endblock %}
+    {% endif %}
   </div>
 </body>
 </html>
