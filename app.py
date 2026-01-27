@@ -590,7 +590,25 @@ def create_app():
                 error=error,
                 current_round=None,
                 rounds=[],
-                current_round_players=[]
+                current_round_players=[],
+                difficulty=dificulty,
+                # Is difficulty locked? (i.e. game already started)
+                cur.execute("SELECT COUNT(*) AS cnt FROM rounds")
+                round_count = cur.fetchone()["cnt"]
+                difficulty_locked = round_count > 0
+
+            conn.close()
+
+        return render_template(
+            "admin.html",
+            is_admin=True,
+            error=error,
+            current_round=current_round,
+            rounds=rounds,
+            current_round_players=current_round_players,
+            difficulty=difficulty,
+            difficulty_locked=difficulty_locked
+        )
             )
 
         conn = get_db()
@@ -617,20 +635,25 @@ def create_app():
                     conn.commit()
                     
             elif action == "set_difficulty":
-                mode = (request.form.get("difficulty") or "hard").strip().lower()
-                if mode not in ("easy", "hard", "extreme"):
-                    mode = "hard"
-                # update settings
-                cur.execute(
-                    "UPDATE settings SET value = ? WHERE key = 'difficulty'",
-                    (mode,)
-                )
-                if cur.rowcount == 0:
+                # Difficulty can only be changed BEFORE any round exists
+                cur.execute("SELECT COUNT(*) AS cnt FROM rounds")
+                round_count = cur.fetchone()["cnt"]
+                if round_count > 0:
+                    error = "Difficulty can only be changed before the first round is created."
+                else:
+                    mode = (request.form.get("difficulty") or "hard").strip().lower()
+                    if mode not in ("easy", "hard", "extreme"):
+                        mode = "hard"
                     cur.execute(
-                        "INSERT INTO settings(key, value) VALUES('difficulty', ?)",
+                        "UPDATE settings SET value = ? WHERE key = 'difficulty'",
                         (mode,)
                     )
-                conn.commit()
+                    if cur.rowcount == 0:
+                        cur.execute(
+                            "INSERT INTO settings(key, value) VALUES('difficulty', ?)",
+                            (mode,)
+                        )
+                    conn.commit()
                 
             elif action == "set_answers":
                 correct_song = request.form.get("correct_song", "").strip()
