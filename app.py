@@ -762,7 +762,8 @@ def create_app():
             current_round=current_round,
             rounds=rounds,
             current_round_players=current_round_players,
-            difficulty=difficulty
+            difficulty=difficulty,
+            difficulty_locked=difficulty_locked
         )
 
     return app
