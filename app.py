@@ -591,10 +591,10 @@ def create_app():
                 current_round=None,
                 rounds=[],
                 current_round_players=[],
-                difficulty=dificulty,
+                difficulty=difficulty,
                 # Is difficulty locked? (i.e. game already started)
-                cur.execute("SELECT COUNT(*) AS cnt FROM rounds"),
-                round_count = cur.fetchone()["cnt"],
+                cur.execute("SELECT COUNT(*) AS cnt FROM rounds")
+                round_count = cur.fetchone()["cnt"]
                 difficulty_locked = round_count > 0
 
             conn.close()
@@ -607,7 +607,7 @@ def create_app():
             rounds=rounds,
             current_round_players=current_round_players,
             difficulty=difficulty,
-            difficulty_locked=difficulty_locked
+            difficulty_locked=difficulty_locked,
         )
             )
 
