@@ -1,25 +1,66 @@
 {% extends "base.html" %}
 
+{% block head %}
+  {{ super() if super else "" }}
+  <!-- Reduce caching issues on mobile/proxies -->
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+{% endblock %}
+
 {% block content %}
 <div class="card">
-  <h2>Register</h2>
+  <h2>Join the game</h2>
 
   {% if error %}
-    <p style="color:#ff5252;">{{ error }}</p>
+    <p style="color:#ff5252; margin-top:8px;">{{ error }}</p>
   {% endif %}
 
-  <form method="post">
+  {% if session.get("player_id") %}
+    <div style="margin: 12px 0; padding: 10px; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;">
+      <p style="margin:0; opacity:0.9;">
+        This device is already registered.
+      </p>
+      <p style="margin:6px 0 0 0; opacity:0.75;">
+        If you want to register a different player on this device, use “Switch player”.
+      </p>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
+        <a class="btn" href="/game">Continue</a>
+        <a class="btn secondary" href="/switch">Switch player</a>
+      </div>
+    </div>
+  {% endif %}
+
+  <form method="post" autocomplete="off">
     <label>Player name</label>
-    <input type="text" name="name" placeholder="e.g. Ham Hum Şaralop" required>
+    <input
+      type="text"
+      name="name"
+      placeholder="e.g. Atiklc"
+      minlength="2"
+      maxlength="24"
+      required
+      autocapitalize="none"
+      spellcheck="false"
+    >
 
-    <label>Email (optional)</label>
-    <input type="email" name="email" placeholder="name@example.com">
+    <label>Email (optional, only for registration)</label>
+    <input
+      type="email"
+      name="email"
+      placeholder="name@example.com"
+      autocapitalize="none"
+      spellcheck="false"
+    >
 
-    <button type="submit" class="btn">Enter game</button>
+    <button type="submit" class="btn" style="margin-top:10px;">
+      Enter game
+    </button>
   </form>
 
-  <p style="margin-top:12px; opacity:0.8;">
-    If you already registered before, enter the same player name to continue.
+  <p style="margin-top:12px; opacity:0.75;">
+    Tip: If your name already exists, entering the same name logs you back in on this device.
   </p>
 </div>
 {% endblock %}
