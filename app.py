@@ -742,7 +742,10 @@ def create_app():
 
 
 app = create_app()
-
+@app.get("/switch")
+def switch_player():
+    session.pop("player_id", None)
+    return redirect(url_for("register"))
 if __name__ == "__main__":
     # local run
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
