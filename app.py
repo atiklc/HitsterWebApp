@@ -61,7 +61,6 @@ def init_db():
     )
     """)
 
-    # New: snapshot of standings after each closed round
     cur.execute("""
     CREATE TABLE IF NOT EXISTS round_standings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,10 +73,23 @@ def init_db():
     )
     """)
 
+    # New: settings table (for difficulty etc.)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
+
+    # Ensure default difficulty = hard
+    cur.execute("""
+        INSERT OR IGNORE INTO settings(key, value)
+        VALUES('difficulty', 'hard')
+    """)
+
     conn.commit()
     conn.close()
-
-
+    
 def get_current_player():
     player_id = session.get("player_id")
     if not player_id:
@@ -100,25 +112,52 @@ def get_current_open_round():
     conn.close()
     return row
 
+def get_difficulty(cur):
+    cur.execute("SELECT value FROM settings WHERE key = 'difficulty'")
+    row = cur.fetchone()
+    if not row or not row["value"]:
+        return "hard"
+    val = row["value"].strip().lower()
+    if val not in ("easy", "hard", "extreme"):
+        return "hard"
+    return val
 
 def score_hitster_round(cur, round_row):
     """
-    Hitster scoring:
+    Hitster scoring with difficulty modes.
 
+    Common for all modes:
       Song:   exact (case-insensitive) -> 5 pts
       Artist: exact                   -> 5 pts
-      Year (absolute difference in years):
 
-        diff = |guess - correct|
+    Difficulty modes (year scoring):
 
-        0       -> 10 pts
-        1       -> 8 pts
-        2       -> 6 pts
-        3–5     -> 4 pts
-        6–10    -> 2 pts
-        >10     -> -4 pts
+    1) EASY  (original system; 5..1, no negatives)
+       - diff = |guess - correct|
+         0       -> 5 pts
+         1       -> 4 pts
+         2       -> 3 pts
+         if *all* guesses have diff >= 3:
+             closest guess(es) -> 1 pt
+             others           -> 0
+         (invalid/missing year -> 0)
 
-      If year cannot be parsed as int, year score = 0.
+    2) HARD  (current system)
+       - diff = |guess - correct|
+         0       -> 10 pts
+         1       -> 8 pts
+         2       -> 6 pts
+         3–5     -> 4 pts
+         6–10    -> 2 pts
+         >10     -> -4 pts
+         (invalid/missing year -> 0)
+
+    3) EXTREME
+       - Only exact year counts:
+         0       -> 10 pts
+         1–10    -> 0 pts
+         >10     -> -5 pts
+         (invalid/missing year -> 0)
     """
     round_id = round_row["id"]
     correct_song = (round_row["correct_song"] or "").strip().lower()
@@ -130,7 +169,9 @@ def score_hitster_round(cur, round_row):
     except ValueError:
         correct_year = None
 
-    # All guesses for this round
+    difficulty = get_difficulty(cur)
+
+    # Fetch all guesses for this round
     cur.execute("""
         SELECT id, answer_song, answer_artist, answer_year
         FROM guesses
@@ -138,25 +179,71 @@ def score_hitster_round(cur, round_row):
     """, (round_id,))
     guesses = cur.fetchall()
 
+    # For EASY mode, we need min diff across valid guesses
+    diffs = {}
+    min_diff = None
+    if correct_year is not None and difficulty == "easy":
+        for g in guesses:
+            gid = g["id"]
+            year_guess_str = (g["answer_year"] or "").strip()
+            try:
+                guess_year = int(year_guess_str)
+            except ValueError:
+                continue
+            d = abs(guess_year - correct_year)
+            diffs[gid] = d
+            if min_diff is None or d < min_diff:
+                min_diff = d
+
     for g in guesses:
         gid = g["id"]
         song_guess = (g["answer_song"] or "").strip().lower()
         artist_guess = (g["answer_artist"] or "").strip().lower()
         year_guess_str = (g["answer_year"] or "").strip()
 
-        # Song
+        # Song & artist scoring (same in all modes)
         score_song = 5 if correct_song and song_guess == correct_song else 0
-
-        # Artist
         score_artist = 5 if correct_artist and artist_guess == correct_artist else 0
 
-        # Year
         score_year = 0
+
+        # If no valid correct year, year score is always 0
         if correct_year is not None and year_guess_str:
             try:
                 guess_year = int(year_guess_str)
                 diff = abs(guess_year - correct_year)
+            except ValueError:
+                diff = None
+        else:
+            diff = None
 
+        if difficulty == "easy":
+            # 0 -> 5, 1 -> 4, 2 -> 3, else maybe 1 for closest if everybody >=3
+            if diff is None:
+                score_year = 0
+            elif diff == 0:
+                score_year = 5
+            elif diff == 1:
+                score_year = 4
+            elif diff == 2:
+                score_year = 3
+            else:
+                # diff >= 3
+                # Only if all valid diffs are >=3 AND this is the minimum diff
+                if min_diff is not None and min_diff >= 3:
+                    gid_diff = diffs.get(gid)
+                    if gid_diff is not None and gid_diff == min_diff:
+                        score_year = 1
+                    else:
+                        score_year = 0
+                else:
+                    score_year = 0
+
+        elif difficulty == "hard":
+            # 0 -> 10, 1 -> 8, 2 -> 6, 3–5 -> 4, 6–10 -> 2, >10 -> -4
+            if diff is None:
+                score_year = 0
+            else:
                 if diff == 0:
                     score_year = 10
                 elif diff == 1:
@@ -169,8 +256,35 @@ def score_hitster_round(cur, round_row):
                     score_year = 2
                 else:  # diff > 10
                     score_year = -4
-            except ValueError:
+
+        elif difficulty == "extreme":
+            # Only exact year counts, big miss punished
+            if diff is None:
                 score_year = 0
+            else:
+                if diff == 0:
+                    score_year = 10
+                elif diff > 10:
+                    score_year = -5
+                else:
+                    score_year = 0
+        else:
+            # Fallback: treat as hard
+            if diff is None:
+                score_year = 0
+            else:
+                if diff == 0:
+                    score_year = 10
+                elif diff == 1:
+                    score_year = 8
+                elif diff == 2:
+                    score_year = 6
+                elif 3 <= diff <= 5:
+                    score_year = 4
+                elif 6 <= diff <= 10:
+                    score_year = 2
+                else:
+                    score_year = -4
 
         total = score_song + score_artist + score_year
 
@@ -179,7 +293,6 @@ def score_hitster_round(cur, round_row):
             SET score_song = ?, score_artist = ?, score_year = ?, total_score = ?
             WHERE id = ?
         """, (score_song, score_artist, score_year, total, gid))
-
 
 def snapshot_standings(cur, round_id):
     """
@@ -502,7 +615,23 @@ def create_app():
                         VALUES (?,?,?,?, 'open')
                     """, (question, correct_song, correct_artist, correct_year))
                     conn.commit()
-
+                    
+            elif action == "set_difficulty":
+                mode = (request.form.get("difficulty") or "hard").strip().lower()
+                if mode not in ("easy", "hard", "extreme"):
+                    mode = "hard"
+                # update settings
+                cur.execute(
+                    "UPDATE settings SET value = ? WHERE key = 'difficulty'",
+                    (mode,)
+                )
+                if cur.rowcount == 0:
+                    cur.execute(
+                        "INSERT INTO settings(key, value) VALUES('difficulty', ?)",
+                        (mode,)
+                    )
+                conn.commit()
+                
             elif action == "set_answers":
                 correct_song = request.form.get("correct_song", "").strip()
                 correct_artist = request.form.get("correct_artist", "").strip()
@@ -569,6 +698,38 @@ def create_app():
             """, (current_round["id"],))
             current_round_players = cur.fetchall()
 
+        # Fetch current open round
+        cur.execute(
+            "SELECT * FROM rounds WHERE status = 'open' ORDER BY id DESC LIMIT 1"
+        )
+        current_round = cur.fetchone()
+
+        # Fetch recent rounds
+        cur.execute("SELECT * FROM rounds ORDER BY id DESC LIMIT 20")
+        rounds = cur.fetchall()
+
+        # Fetch players + whether they answered this round
+        current_round_players = []
+        if current_round:
+            cur.execute("""
+                SELECT
+                    p.name,
+                    g.answer_song,
+                    g.answer_artist,
+                    g.answer_year
+                FROM players p
+                LEFT JOIN guesses g
+                  ON p.id = g.player_id AND g.round_id = ?
+                ORDER BY p.name
+            """, (current_round["id"],))
+            current_round_players = cur.fetchall()
+
+        # New: current difficulty
+        cur.execute("SELECT value FROM settings WHERE key = 'difficulty'")
+        row = cur.fetchone()
+        difficulty = (row["value"].strip().lower()
+                      if row and row["value"] else "hard")
+
         conn.close()
 
         return render_template(
@@ -577,7 +738,8 @@ def create_app():
             error=error,
             current_round=current_round,
             rounds=rounds,
-            current_round_players=current_round_players
+            current_round_players=current_round_players,
+            difficulty=difficulty
         )
 
     return app
