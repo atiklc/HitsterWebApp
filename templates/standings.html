@@ -1,173 +1,21 @@
 {% extends "base.html" %}
-
-{% block head_extra %}
-<style>
-  .trend-up {
-    color: #00c853;   /* green - same as Giga */
-  }
-  .trend-down {
-    color: #ff5252;   /* red - same as Giga */
-  }
-  .trend-same {
-    color: #ffffff;   /* white text */
-    background-color: #555555;  /* dark bg so white is visible */
-    padding: 2px 6px;
-    border-radius: 8px;
-    display: inline-block;
-  }
-
-  .answers-table th,
-  .answers-table td {
-    white-space: nowrap;
-    font-size: 0.9rem;
-  }
-
-  .answers-table td.player-name {
-    font-weight: 600;
-  }
-</style>
-<script>
-  async function loadStandings() {
-    try {
-      const res = await fetch("{{ url_for('api_standings') }}");
-      const data = await res.json();
-      const tbody = document.getElementById("standings-body");
-      tbody.innerHTML = "";
-
-      data.forEach((row) => {
-        let trendClass = "trend-same";
-        let trendSymbol = "•";
-        let deltaText = row.delta;
-
-        if (row.delta > 0) {
-          trendClass = "trend-up";
-          trendSymbol = "▲";
-          deltaText = "+" + row.delta;
-        } else if (row.delta < 0) {
-          trendClass = "trend-down";
-          trendSymbol = "▼";
-          // deltaText already negative
-        } else {
-          trendClass = "trend-same";
-          trendSymbol = "•";
-          deltaText = "0";
-        }
-
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${row.rank}</td>
-          <td>${row.player}</td>
-          <td>${row.score}</td>
-          <td><span class="${trendClass}">${trendSymbol} ${deltaText}</span></td>
-        `;
-        tbody.appendChild(tr);
-      });
-    } catch (e) {
-      console.error("Error loading standings", e);
-    }
-  }
-
-  async function loadLastRoundAnswers() {
-    try {
-      const res = await fetch("{{ url_for('api_last_round_answers') }}");
-      const data = await res.json();
-
-      const roundTitle   = document.getElementById("round-title");
-      const correctSong  = document.getElementById("correct-song");
-      const correctArtist= document.getElementById("correct-artist");
-      const correctYear  = document.getElementById("correct-year");
-      const answersBody  = document.getElementById("answers-body");
-
-      answersBody.innerHTML = "";
-      correctSong.textContent   = "";
-      correctArtist.textContent = "";
-      correctYear.textContent   = "";
-      roundTitle.textContent    = "Last closed round";
-
-      if (!data.round) {
-        roundTitle.textContent = "No closed rounds yet";
-        return;
-      }
-
-      const r = data.round;
-
-      roundTitle.textContent = `Round #${r.id}: ${r.question}`;
-      correctSong.textContent   = r.correct_song   || "-";
-      correctArtist.textContent = r.correct_artist || "-";
-      correctYear.textContent   = r.correct_year   || "-";
-
-      data.answers.forEach((row) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="player-name">${row.player}</td>
-          <td>${row.song}</td>
-          <td>${row.artist}</td>
-          <td>${row.year}</td>
-          <td>${row.score_song}</td>
-          <td>${row.score_artist}</td>
-          <td>${row.score_year}</td>
-          <td>${row.total_score}</td>
-        `;
-        answersBody.appendChild(tr);
-      });
-
-    } catch (e) {
-      console.error("Error loading last round answers", e);
-    }
-  }
-
-  document.addEventListener("DOMContentLoaded", () => {
-    loadStandings();
-    loadLastRoundAnswers();
-    setInterval(loadStandings, 3000);        // update standings
-    setInterval(loadLastRoundAnswers, 5000); // update last round answers
-  });
-</script>
-{% endblock %}
-
 {% block content %}
 <div class="card">
   <h2>Standings</h2>
   <table>
-    <thead>
+    <thead><tr><th>#</th><th>Player</th><th>Pts</th><th>Δ</th></tr></thead>
+    <tbody>
+      {% for s in standings %}
       <tr>
-        <th>Rank</th>
-        <th>Player</th>
-        <th>Points</th>
-        <th>Change</th>
+        <td>{{ s.rank }}</td>
+        <td>{{ s.player }}</td>
+        <td>{{ s.points }}</td>
+        <td>{{ s.delta }}</td>
       </tr>
-    </thead>
-    <tbody id="standings-body">
-      <!-- JS fills -->
+      {% endfor %}
     </tbody>
   </table>
-</div>
 
-<div class="card">
-  <h2 id="round-title">Last closed round</h2>
-
-  <p>
-    <strong>Correct song:</strong> <span id="correct-song">-</span><br>
-    <strong>Correct artist:</strong> <span id="correct-artist">-</span><br>
-    <strong>Correct year:</strong> <span id="correct-year">-</span>
-  </p>
-
-  <table class="answers-table">
-    <thead>
-      <tr>
-        <th>Player</th>
-        <th>Song</th>
-        <th>Artist</th>
-        <th>Year</th>
-        <th>Song pts</th>
-        <th>Artist pts</th>
-        <th>Year pts</th>
-        <th>Total pts</th>
-      </tr>
-    </thead>
-    <tbody id="answers-body">
-      <!-- JS fills -->
-    </tbody>
-  </table>
+  <p style="margin-top:12px;"><a href="{{ url_for('game') }}">Back</a></p>
 </div>
 {% endblock %}
