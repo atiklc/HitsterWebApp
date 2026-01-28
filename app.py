@@ -330,7 +330,10 @@ def register():
     if request.method == "POST":
         email = (request.form.get("email") or "").strip()
         name = (request.form.get("name") or "").strip()
-
+        session["player_id"] = new_player_id
+        session["player_name"] = player_name
+        return redirect(url_for("game"))
+        
         if not name:
             error = "Player name is required."
         elif len(name) > 30:
@@ -367,9 +370,14 @@ def logout():
     return redirect(url_for("register"))
 
 @app.get("/game")
-@require_player
 def game():
-    open_round = get_open_round()
+    player_id = session.get("player_id")
+    if not player_id:
+        return redirect(url_for("register"))
+
+    # fetch player + open round safely...
+    open_round = get_open_round()  # your function
+    return render_template("game.html", open_round=open_round)
     standings = compute_position_deltas(compute_standings())
     last_round, last_guesses = get_last_closed_round_with_guesses()
 
