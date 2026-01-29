@@ -1,456 +1,626 @@
 import os
 import sqlite3
 from datetime import datetime, timezone
-from functools import wraps
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, jsonify, abort, flash
+    session, jsonify, abort
 )
 
-# ----------------------------
-# App config
-# ----------------------------
-app = Flask(__name__)
+# -----------------------------
+# App setup
+# -----------------------------
+app = Flask(__name__, template_folder="templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "0987654321")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "0987654321")  # change on Render!
 
 DB_PATH = os.environ.get("DB_PATH", "hitster.db")
 
 
-# ----------------------------
-# DB helpers
-# ----------------------------
+# -----------------------------
+# Helpers
+# -----------------------------
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
-def db():
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    return con
+
+def db_connect():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
+
 
 def init_db():
-    con = db()
-    cur = con.cursor()
+    with db_connect() as con:
+        con.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS players (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL UNIQUE,
+              email TEXT,
+              created_at TEXT NOT NULL
+            );
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS players (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT,
-        name TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL
-    )
-    """)
+            CREATE TABLE IF NOT EXISTS rounds (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              question TEXT,
+              status TEXT NOT NULL CHECK(status IN ('open','closed')),
+              correct_song TEXT,
+              correct_artist TEXT,
+              correct_year INTEGER,
+              created_at TEXT NOT NULL,
+              closed_at TEXT
+            );
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS rounds (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        question TEXT,
-        correct_song TEXT,
-        correct_artist TEXT,
-        correct_year INTEGER,
-        status TEXT NOT NULL, -- 'open' or 'closed'
-        created_at TEXT NOT NULL,
-        closed_at TEXT
-    )
-    """)
+            CREATE TABLE IF NOT EXISTS guesses (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              round_id INTEGER NOT NULL,
+              player_id INTEGER NOT NULL,
+              guess_song TEXT,
+              guess_artist TEXT,
+              guess_year INTEGER,
+              points_year INTEGER NOT NULL DEFAULT 0,
+              points_song INTEGER NOT NULL DEFAULT 0,
+              points_artist INTEGER NOT NULL DEFAULT 0,
+              total_points INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE(round_id, player_id),
+              FOREIGN KEY(round_id) REFERENCES rounds(id) ON DELETE CASCADE,
+              FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE
+            );
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS guesses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        round_id INTEGER NOT NULL,
-        player_id INTEGER NOT NULL,
-        guess_song TEXT,
-        guess_artist TEXT,
-        guess_year INTEGER,
-        submitted_at TEXT NOT NULL,
-        points_song INTEGER NOT NULL DEFAULT 0,
-        points_artist INTEGER NOT NULL DEFAULT 0,
-        points_year INTEGER NOT NULL DEFAULT 0,
-        total_points INTEGER NOT NULL DEFAULT 0,
-        UNIQUE(round_id, player_id),
-        FOREIGN KEY(round_id) REFERENCES rounds(id),
-        FOREIGN KEY(player_id) REFERENCES players(id)
-    )
-    """)
+            -- Snapshots after each closed round for delta (position change)
+            CREATE TABLE IF NOT EXISTS standings_history (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              round_id INTEGER NOT NULL,
+              player_id INTEGER NOT NULL,
+              rank INTEGER NOT NULL,
+              points INTEGER NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(round_id, player_id),
+              FOREIGN KEY(round_id) REFERENCES rounds(id) ON DELETE CASCADE,
+              FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE
+            );
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS standings_snapshots (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        round_id INTEGER NOT NULL,
-        player_id INTEGER NOT NULL,
-        rank INTEGER NOT NULL,
-        total_points INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        UNIQUE(round_id, player_id),
-        FOREIGN KEY(round_id) REFERENCES rounds(id),
-        FOREIGN KEY(player_id) REFERENCES players(id)
-    )
-    """)
+            -- Game settings (difficulty only). NOT used for current player.
+            CREATE TABLE IF NOT EXISTS settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL
+            );
+            """
+        )
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-    )
-    """)
-
-    # default difficulty if missing
-    cur.execute("SELECT value FROM settings WHERE key='difficulty'")
-    if cur.fetchone() is None:
-        cur.execute("INSERT INTO settings(key,value) VALUES('difficulty','easy')")
-
-    con.commit()
-    con.close()
-
-init_db()
+        # Default difficulty
+        cur = con.execute("SELECT value FROM settings WHERE key='difficulty'")
+        if cur.fetchone() is None:
+            con.execute("INSERT INTO settings(key,value) VALUES('difficulty','easy')")
 
 
-# ----------------------------
-# Auth helpers
-# ----------------------------
-def require_player(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not session.get("player_id"):
-            return redirect(url_for("register"))
-        return fn(*args, **kwargs)
-    return wrapper
-
-def require_admin(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not session.get("is_admin"):
-            return redirect(url_for("admin_login"))
-        return fn(*args, **kwargs)
-    return wrapper
+@app.before_request
+def _ensure_db():
+    init_db()
 
 
-# ----------------------------
-# Game logic
-# ----------------------------
 def get_setting(key: str, default: str = "") -> str:
-    con = db()
-    cur = con.cursor()
-    cur.execute("SELECT value FROM settings WHERE key=?", (key,))
-    row = cur.fetchone()
-    con.close()
-    return row["value"] if row else default
+    with db_connect() as con:
+        row = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
 
-def set_setting(key: str, value: str):
-    con = db()
-    cur = con.cursor()
-    cur.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
-    con.commit()
-    con.close()
+
+def set_setting(key: str, value: str) -> None:
+    with db_connect() as con:
+        con.execute(
+            "INSERT INTO settings(key,value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+
+def difficulty_locked() -> bool:
+    with db_connect() as con:
+        cnt = con.execute("SELECT COUNT(*) AS c FROM rounds").fetchone()["c"]
+        return cnt > 0
+
+
+def current_player():
+    pid = session.get("player_id")
+    if not pid:
+        return None
+    with db_connect() as con:
+        return con.execute("SELECT * FROM players WHERE id=?", (pid,)).fetchone()
+
 
 def get_open_round():
-    con = db()
-    cur = con.cursor()
-    cur.execute("SELECT * FROM rounds WHERE status='open' ORDER BY id DESC LIMIT 1")
-    r = cur.fetchone()
-    con.close()
-    return r
+    with db_connect() as con:
+        return con.execute(
+            "SELECT * FROM rounds WHERE status='open' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
 
-def round_count():
-    con = db()
-    cur = con.cursor()
-    cur.execute("SELECT COUNT(*) AS cnt FROM rounds")
-    cnt = cur.fetchone()["cnt"]
-    con.close()
-    return cnt
 
-def parse_int(v):
-    try:
-        v = str(v).strip()
-        if v == "":
-            return None
-        return int(v)
-    except Exception:
-        return None
+def get_last_closed_round():
+    with db_connect() as con:
+        return con.execute(
+            "SELECT * FROM rounds WHERE status='closed' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
 
-def norm_text(s: str) -> str:
-    return (s or "").strip().casefold()
 
-def score_year_hard(diff: int) -> int:
-    # a. Exact answer - 10pt
-    # b. +/- 1 year - 8pt
-    # c. +/- 2 years - 6pt
-    # d. +/- 3-5 years - 4 pt
-    # e. +/- 6-10 years - 2 pt
-    # f. +/- >10 years - (-4) pt
-    if diff == 0: return 10
-    if diff == 1: return 8
-    if diff == 2: return 6
-    if 3 <= diff <= 5: return 4
-    if 6 <= diff <= 10: return 2
-    return -4
+def normalize_text(s: str) -> str:
+    # Simple normalization for matching (case-insensitive, trimmed)
+    return (s or "").strip().lower()
 
-def score_year_extreme(diff: int) -> int:
-    # exact=10
-    # wrong >10 => -5 penalty
-    # else 0
-    if diff == 0:
-        return 10
-    if diff > 10:
-        return -5
+
+def score_year(diff: int, difficulty: str) -> int:
+    # diff = abs(guess - correct)
+    if difficulty == "easy":
+        # 5..1, no negatives
+        if diff == 0:
+            return 5
+        if diff == 1:
+            return 4
+        if diff == 2:
+            return 3
+        if 3 <= diff <= 5:
+            return 2
+        if 6 <= diff <= 10:
+            return 1
+        return 0
+
+    if difficulty == "hard":
+        # Your current (annoying-but-precise) system
+        if diff == 0:
+            return 10
+        if diff == 1:
+            return 8
+        if diff == 2:
+            return 6
+        if 3 <= diff <= 5:
+            return 4
+        if 6 <= diff <= 10:
+            return 2
+        return -4  # >10
+
+    if difficulty == "extreme":
+        # Only exact answer counts. Big miss penalty.
+        if diff == 0:
+            return 10
+        if diff > 10:
+            return -5
+        return 0
+
+    # fallback
     return 0
 
-def score_year_easy_individual(diff: int) -> int:
-    # base mapping without "closest" rule
-    if diff == 0: return 5
-    if diff == 1: return 4
-    if diff == 2: return 3
-    return 0
+
+def score_song_artist(guess: str, correct: str) -> int:
+    # 5 pts for exact match if correct is provided
+    if not correct:
+        return 0
+    return 5 if normalize_text(guess) == normalize_text(correct) else 0
+
+
+def compute_and_store_round_scores(round_id: int):
+    """Compute scores for guesses in this round (only when closing the round)."""
+    difficulty = get_setting("difficulty", "easy")
+
+    with db_connect() as con:
+        rnd = con.execute("SELECT * FROM rounds WHERE id=?", (round_id,)).fetchone()
+        if not rnd:
+            return
+
+        cy = rnd["correct_year"]
+        cs = rnd["correct_song"] or ""
+        ca = rnd["correct_artist"] or ""
+
+        guesses = con.execute(
+            "SELECT * FROM guesses WHERE round_id=?", (round_id,)
+        ).fetchall()
+
+        for g in guesses:
+            py = 0
+            if cy is not None and g["guess_year"] is not None:
+                py = score_year(abs(int(g["guess_year"]) - int(cy)), difficulty)
+
+            ps = score_song_artist(g["guess_song"] or "", cs)
+            pa = score_song_artist(g["guess_artist"] or "", ca)
+
+            total = py + ps + pa
+            con.execute(
+                """
+                UPDATE guesses
+                SET points_year=?, points_song=?, points_artist=?, total_points=?, updated_at=?
+                WHERE id=?
+                """,
+                (py, ps, pa, total, utc_now_iso(), g["id"]),
+            )
+
 
 def compute_standings():
-    con = db()
-    cur = con.cursor()
-    cur.execute("""
-        SELECT p.id AS player_id, p.name AS player,
-               COALESCE(SUM(g.total_points),0) AS points
-        FROM players p
-        LEFT JOIN guesses g ON g.player_id=p.id
-        LEFT JOIN rounds r ON r.id=g.round_id AND r.status='closed'
-        GROUP BY p.id
-        ORDER BY points DESC, p.name COLLATE NOCASE ASC
-    """)
-    rows = cur.fetchall()
-    con.close()
+    """Return standings list: [{player_id,name,points}] sorted."""
+    with db_connect() as con:
+        rows = con.execute(
+            """
+            SELECT p.id AS player_id, p.name AS player,
+                   COALESCE(SUM(g.total_points), 0) AS points
+            FROM players p
+            LEFT JOIN guesses g ON g.player_id = p.id
+            GROUP BY p.id
+            ORDER BY points DESC, p.name COLLATE NOCASE ASC
+            """
+        ).fetchall()
 
-    # dense ranking
     standings = []
-    last_pts = None
-    rank = 0
-    for i, row in enumerate(rows):
-        pts = int(row["points"])
-        if last_pts is None or pts != last_pts:
-            rank = rank + 1
-            last_pts = pts
-        standings.append({"rank": rank, "player": row["player"], "player_id": row["player_id"], "points": pts})
+    for r in rows:
+        standings.append(
+            {
+                "player_id": r["player_id"],
+                "player": r["player"],
+                "points": int(r["points"]),
+            }
+        )
     return standings
 
-def get_last_two_snapshots():
-    con = db()
-    cur = con.cursor()
-    cur.execute("SELECT id, round_id FROM rounds WHERE status='closed' ORDER BY id DESC LIMIT 2")
-    rr = cur.fetchall()
-    con.close()
-    if len(rr) == 0:
-        return None, None
-    if len(rr) == 1:
-        return rr[0]["id"], None
-    return rr[0]["id"], rr[1]["id"]
 
-def compute_position_deltas(standings):
-    last_closed_round_id, prev_closed_round_id = get_last_two_snapshots()
-    if not last_closed_round_id:
-        for s in standings:
-            s["delta"] = 0
-        return standings
-
-    con = db()
-    cur = con.cursor()
-
-    cur.execute("SELECT player_id, rank FROM standings_snapshots WHERE round_id=?", (last_closed_round_id,))
-    last_map = {r["player_id"]: r["rank"] for r in cur.fetchall()}
-
-    prev_map = {}
-    if prev_closed_round_id:
-        cur.execute("SELECT player_id, rank FROM standings_snapshots WHERE round_id=?", (prev_closed_round_id,))
-        prev_map = {r["player_id"]: r["rank"] for r in cur.fetchall()}
-
-    con.close()
-
-    out = []
-    for s in standings:
-        pid = s["player_id"]
-        cur_rank = last_map.get(pid, s["rank"])
-        prev_rank = prev_map.get(pid)
-        delta = 0
-        if prev_rank is not None:
-            delta = prev_rank - cur_rank  # + means went up
-        out.append({**s, "rank": cur_rank, "delta": delta})
-    out.sort(key=lambda x: (x["rank"], x["player"].casefold()))
-    return out
-
-def save_snapshot_for_round(round_id: int):
+def save_standings_snapshot(closed_round_id: int):
+    """Save rank snapshot after a round is closed (for delta calculation)."""
     standings = compute_standings()
-    standings = compute_position_deltas(standings)
-
-    con = db()
-    cur = con.cursor()
-    now = utc_now_iso()
-
-    for s in standings:
-        cur.execute("""
-            INSERT INTO standings_snapshots(round_id, player_id, rank, total_points, created_at)
-            VALUES(?,?,?,?,?)
-            ON CONFLICT(round_id, player_id) DO UPDATE SET
-              rank=excluded.rank, total_points=excluded.total_points, created_at=excluded.created_at
-        """, (round_id, s["player_id"], s["rank"], s["points"], now))
-
-    con.commit()
-    con.close()
-
-def get_last_closed_round_with_guesses():
-    con = db()
-    cur = con.cursor()
-    cur.execute("SELECT * FROM rounds WHERE status='closed' ORDER BY id DESC LIMIT 1")
-    rnd = cur.fetchone()
-    if not rnd:
-        con.close()
-        return None, []
-
-    cur.execute("""
-        SELECT p.name AS player, g.guess_song, g.guess_artist, g.guess_year,
-               g.points_song, g.points_artist, g.points_year, g.total_points
-        FROM guesses g
-        JOIN players p ON p.id=g.player_id
-        WHERE g.round_id=?
-        ORDER BY p.name COLLATE NOCASE ASC
-    """, (rnd["id"],))
-    guesses = cur.fetchall()
-    con.close()
-    return rnd, guesses
+    with db_connect() as con:
+        for i, s in enumerate(standings, start=1):
+            con.execute(
+                """
+                INSERT INTO standings_history(round_id, player_id, rank, points, created_at)
+                VALUES(?,?,?,?,?)
+                ON CONFLICT(round_id, player_id) DO UPDATE SET
+                  rank=excluded.rank, points=excluded.points, created_at=excluded.created_at
+                """,
+                (closed_round_id, s["player_id"], i, s["points"], utc_now_iso()),
+            )
 
 
-# ----------------------------
-# Routes
-# ----------------------------
+def get_rank_delta_for_latest():
+    """Return dict {player_id: delta} comparing last two snapshots."""
+    with db_connect() as con:
+        last = con.execute(
+            "SELECT id FROM rounds WHERE status='closed' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not last:
+            return {}
+
+        prev = con.execute(
+            "SELECT id FROM rounds WHERE status='closed' AND id < ? ORDER BY id DESC LIMIT 1",
+            (last["id"],),
+        ).fetchone()
+
+        last_rows = con.execute(
+            "SELECT player_id, rank FROM standings_history WHERE round_id=?",
+            (last["id"],),
+        ).fetchall()
+        last_rank = {r["player_id"]: r["rank"] for r in last_rows}
+
+        if not prev:
+            return {pid: 0 for pid in last_rank.keys()}
+
+        prev_rows = con.execute(
+            "SELECT player_id, rank FROM standings_history WHERE round_id=?",
+            (prev["id"],),
+        ).fetchall()
+        prev_rank = {r["player_id"]: r["rank"] for r in prev_rows}
+
+        delta = {}
+        for pid, lr in last_rank.items():
+            pr = prev_rank.get(pid, lr)
+            delta[pid] = int(pr) - int(lr)  # positive => moved up
+        return delta
+
+
+def require_admin():
+    if not session.get("is_admin"):
+        abort(403)
+
+
+# -----------------------------
+# Routes (public)
+# -----------------------------
 @app.get("/")
 def home():
-    # Main entry goes to game page
-    return redirect(url_for("game"))
+    if session.get("player_id"):
+        return redirect(url_for("game"))
+    return redirect(url_for("register"))
+
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
     error = None
+
     if request.method == "POST":
+        name = (request.form.get("player_name") or "").strip()
         email = (request.form.get("email") or "").strip()
-        name = (request.form.get("name") or "").strip()
-        session["player_id"] = new_player_id
-        session["player_name"] = player_name
-        return redirect(url_for("game"))
-        
+
         if not name:
             error = "Player name is required."
-        elif len(name) > 30:
-            error = "Player name is too long (max 30)."
         else:
-            con = db()
-            cur = con.cursor()
-            cur.execute("SELECT id FROM players WHERE name=? COLLATE NOCASE", (name,))
-            row = cur.fetchone()
-            if row:
-                player_id = row["id"]
-                # update email if provided
-                if email:
-                    cur.execute("UPDATE players SET email=? WHERE id=?", (email, player_id))
-            else:
-                cur.execute(
-                    "INSERT INTO players(email,name,created_at) VALUES(?,?,?)",
-                    (email, name, utc_now_iso())
-                )
-                player_id = cur.lastrowid
+            with db_connect() as con:
+                # If name exists, treat as login (simple party-game behavior)
+                row = con.execute(
+                    "SELECT id FROM players WHERE name=? COLLATE NOCASE", (name,)
+                ).fetchone()
 
-            con.commit()
-            con.close()
+                if row:
+                    pid = row["id"]
+                    # Optionally update email if provided
+                    if email:
+                        con.execute("UPDATE players SET email=? WHERE id=?", (email, pid))
+                else:
+                    con.execute(
+                        "INSERT INTO players(name,email,created_at) VALUES(?,?,?)",
+                        (name, email or None, utc_now_iso()),
+                    )
+                    pid = con.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
 
-            session["player_id"] = int(player_id)
+            session.clear()
+            session["player_id"] = int(pid)
             return redirect(url_for("game"))
 
-    return render_template("register.html", error=error)
+    return render_template("register.html", error=error, player=current_player())
+
+
+@app.get("/switch")
+def switch():
+    # Choose an existing player on this device
+    with db_connect() as con:
+        players = con.execute(
+            "SELECT id, name FROM players ORDER BY name COLLATE NOCASE ASC"
+        ).fetchall()
+    return render_template("switch.html", players=players, player=current_player())
+
+
+@app.post("/switch")
+def switch_post():
+    pid = request.form.get("player_id")
+    if not pid:
+        return redirect(url_for("switch"))
+
+    with db_connect() as con:
+        row = con.execute("SELECT id FROM players WHERE id=?", (pid,)).fetchone()
+        if not row:
+            return redirect(url_for("switch"))
+
+    session.clear()
+    session["player_id"] = int(pid)
+    return redirect(url_for("game"))
+
 
 @app.get("/logout")
 def logout():
-    session.pop("player_id", None)
-    session.pop("is_admin", None)
+    session.clear()
     return redirect(url_for("register"))
+
 
 @app.get("/game")
 def game():
-    player_id = session.get("player_id")
-    if not player_id:
+    player = current_player()
+    if not player:
         return redirect(url_for("register"))
 
-    # fetch player + open round safely...
-    open_round = get_open_round()  # your function
-    return render_template("game.html", open_round=open_round)
-    standings = compute_position_deltas(compute_standings())
-    last_round, last_guesses = get_last_closed_round_with_guesses()
+    open_round = get_open_round()
+    last_closed = get_last_closed_round()
 
-    # Did current player submit to open round?
-    my_submitted = False
+    # Player's submission status for open round
     my_guess = None
     if open_round:
-        con = db()
-        cur = con.cursor()
-        cur.execute("SELECT * FROM guesses WHERE round_id=? AND player_id=?", (open_round["id"], session["player_id"]))
-        g = cur.fetchone()
-        con.close()
-        if g:
-            my_submitted = True
-            my_guess = g
+        with db_connect() as con:
+            my_guess = con.execute(
+                "SELECT * FROM guesses WHERE round_id=? AND player_id=?",
+                (open_round["id"], player["id"]),
+            ).fetchone()
+
+    # Standings and deltas
+    standings = compute_standings()
+    delta_map = get_rank_delta_for_latest()
+    for i, s in enumerate(standings, start=1):
+        s["rank"] = i
+        s["delta"] = int(delta_map.get(s["player_id"], 0))
+
+    # Last closed round results table (answers + correct)
+    last_results = []
+    correct = None
+    if last_closed:
+        correct = {
+            "song": last_closed["correct_song"] or "",
+            "artist": last_closed["correct_artist"] or "",
+            "year": last_closed["correct_year"] if last_closed["correct_year"] is not None else "",
+        }
+        with db_connect() as con:
+            last_results = con.execute(
+                """
+                SELECT p.name AS player,
+                       g.guess_song, g.guess_artist, g.guess_year,
+                       g.points_song, g.points_artist, g.points_year, g.total_points
+                FROM guesses g
+                JOIN players p ON p.id = g.player_id
+                WHERE g.round_id=?
+                ORDER BY p.name COLLATE NOCASE ASC
+                """,
+                (last_closed["id"],),
+            ).fetchall()
+
+    difficulty = get_setting("difficulty", "easy")
 
     return render_template(
         "game.html",
+        player=player,
         open_round=open_round,
-        my_submitted=my_submitted,
         my_guess=my_guess,
         standings=standings,
-        last_round=last_round,
-        last_guesses=last_guesses
+        last_closed=last_closed,
+        correct=correct,
+        last_results=last_results,
+        difficulty=difficulty,
     )
 
+
 @app.post("/submit")
-@require_player
 def submit():
+    player = current_player()
+    if not player:
+        return redirect(url_for("register"))
+
     open_round = get_open_round()
     if not open_round:
-        flash("No open round right now.", "warning")
         return redirect(url_for("game"))
 
-    song = (request.form.get("guess_song") or "").strip()
-    artist = (request.form.get("guess_artist") or "").strip()
-    year = parse_int(request.form.get("guess_year"))
+    guess_song = (request.form.get("guess_song") or "").strip()
+    guess_artist = (request.form.get("guess_artist") or "").strip()
+    guess_year_raw = (request.form.get("guess_year") or "").strip()
+    guess_year = None
+    if guess_year_raw:
+        try:
+            guess_year = int(guess_year_raw)
+        except ValueError:
+            guess_year = None
 
-    # require at least one field
-    if not song and not artist and year is None:
-        flash("Please enter at least one field.", "warning")
-        return redirect(url_for("game"))
+    # Require at least ONE field
+    if not (guess_song or guess_artist or guess_year_raw):
+        # Keep it simple: redirect with query flag
+        return redirect(url_for("game", err="enter_one"))
 
-    con = db()
-    cur = con.cursor()
-    try:
-        cur.execute("""
-            INSERT INTO guesses(round_id, player_id, guess_song, guess_artist, guess_year, submitted_at)
-            VALUES(?,?,?,?,?,?)
-        """, (open_round["id"], session["player_id"], song, artist, year, utc_now_iso()))
-        con.commit()
-        flash("Submitted ✅", "success")
-    except sqlite3.IntegrityError:
-        # already submitted -> update instead
-        cur.execute("""
-            UPDATE guesses
-            SET guess_song=?, guess_artist=?, guess_year=?, submitted_at=?
-            WHERE round_id=? AND player_id=?
-        """, (song, artist, year, utc_now_iso(), open_round["id"], session["player_id"]))
-        con.commit()
-        flash("Updated ✅", "success")
-    finally:
-        con.close()
+    with db_connect() as con:
+        # Upsert so players can correct their entry while round is open
+        con.execute(
+            """
+            INSERT INTO guesses(
+              round_id, player_id, guess_song, guess_artist, guess_year,
+              created_at, updated_at
+            ) VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(round_id, player_id) DO UPDATE SET
+              guess_song=excluded.guess_song,
+              guess_artist=excluded.guess_artist,
+              guess_year=excluded.guess_year,
+              updated_at=excluded.updated_at
+            """,
+            (
+                open_round["id"],
+                player["id"],
+                guess_song or None,
+                guess_artist or None,
+                guess_year,
+                utc_now_iso(),
+                utc_now_iso(),
+            ),
+        )
 
     return redirect(url_for("game"))
 
-@app.get("/standings")
-def standings_page():
-    standings = compute_position_deltas(compute_standings())
-    last_round, last_guesses = get_last_closed_round_with_guesses()
-    return render_template("standings.html", standings=standings, last_round=last_round, last_guesses=last_guesses)
 
-# ----- Admin auth -----
+# -----------------------------
+# API (for auto-refresh + Arduino)
+# -----------------------------
+@app.get("/api/state")
+def api_state():
+    player = current_player()
+    if not player:
+        return jsonify({"ok": False, "needs_register": True}), 200
+
+    open_round = get_open_round()
+    data = {
+        "ok": True,
+        "player": {"id": player["id"], "name": player["name"]},
+        "open_round": None,
+        "difficulty": get_setting("difficulty", "easy"),
+        "server_time": utc_now_iso(),
+    }
+
+    if open_round:
+        with db_connect() as con:
+            my_guess = con.execute(
+                "SELECT * FROM guesses WHERE round_id=? AND player_id=?",
+                (open_round["id"], player["id"]),
+            ).fetchone()
+        data["open_round"] = {
+            "id": open_round["id"],
+            "question": open_round["question"] or "",
+            "submitted": bool(my_guess),
+        }
+
+    return jsonify(data), 200
+
+
+@app.get("/api/standings")
+def api_standings():
+    standings = compute_standings()
+    delta_map = get_rank_delta_for_latest()
+
+    out = []
+    for i, s in enumerate(standings, start=1):
+        out.append(
+            {
+                "rank": i,
+                "player": s["player"],
+                "points": s["points"],
+                "delta": int(delta_map.get(s["player_id"], 0)),
+            }
+        )
+    # ensure utf-8 characters survive nicely
+    return app.response_class(
+        response=jsonify(out).get_data(as_text=True),
+        status=200,
+        mimetype="application/json; charset=utf-8",
+    )
+
+
+@app.get("/api/last_round")
+def api_last_round():
+    last_closed = get_last_closed_round()
+    if not last_closed:
+        return jsonify({"ok": True, "has_round": False}), 200
+
+    with db_connect() as con:
+        rows = con.execute(
+            """
+            SELECT p.name AS player,
+                   g.guess_song, g.guess_artist, g.guess_year,
+                   g.points_song, g.points_artist, g.points_year, g.total_points
+            FROM guesses g
+            JOIN players p ON p.id = g.player_id
+            WHERE g.round_id=?
+            ORDER BY p.name COLLATE NOCASE ASC
+            """,
+            (last_closed["id"],),
+        ).fetchall()
+
+    payload = {
+        "ok": True,
+        "has_round": True,
+        "round": {
+            "id": last_closed["id"],
+            "question": last_closed["question"] or "",
+            "correct_song": last_closed["correct_song"] or "",
+            "correct_artist": last_closed["correct_artist"] or "",
+            "correct_year": last_closed["correct_year"],
+            "closed_at": last_closed["closed_at"] or "",
+        },
+        "guesses": [
+            {
+                "player": r["player"],
+                "guess_song": r["guess_song"] or "",
+                "guess_artist": r["guess_artist"] or "",
+                "guess_year": r["guess_year"] if r["guess_year"] is not None else "",
+                "points_song": int(r["points_song"]),
+                "points_artist": int(r["points_artist"]),
+                "points_year": int(r["points_year"]),
+                "total_points": int(r["total_points"]),
+            }
+            for r in rows
+        ],
+    }
+    return jsonify(payload), 200
+
+
+# -----------------------------
+# Admin
+# -----------------------------
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     error = None
@@ -460,256 +630,258 @@ def admin_login():
             session["is_admin"] = True
             return redirect(url_for("admin"))
         error = "Wrong password."
-    return render_template("base.html", content_only=True, title="Admin login",
-                           inner_template="",
-                           error=error, show_login=True)
+    return render_template("base.html", player=current_player(), content_override=f"""
+    <div class="card">
+      <h2>Admin login</h2>
+      {"<p class='err'>" + error + "</p>" if error else ""}
+      <form method="post">
+        <label>Password</label>
+        <input type="password" name="password" autocomplete="current-password">
+        <button class="btn" type="submit">Login</button>
+      </form>
+    </div>
+    """)
+
 
 @app.get("/admin/logout")
 def admin_logout():
     session.pop("is_admin", None)
-    return redirect(url_for("admin_login"))
+    return redirect(url_for("home"))
+
 
 @app.route("/admin", methods=["GET", "POST"])
-@require_admin
 def admin():
-    # Difficulty lock: once any round exists, lock it
-    locked = round_count() > 0
-    difficulty = get_setting("difficulty", "easy")
+    require_admin()
 
-    con = db()
-    cur = con.cursor()
+    msg = None
+    err = None
 
+    # Handle actions
     if request.method == "POST":
-        action = request.form.get("action")
+        action = request.form.get("action") or ""
 
         if action == "set_difficulty":
-            if locked:
-                flash("Difficulty is locked once the game starts.", "warning")
+            if difficulty_locked():
+                err = "Difficulty is locked after the first round is created."
             else:
                 diff = request.form.get("difficulty") or "easy"
                 if diff not in ("easy", "hard", "extreme"):
                     diff = "easy"
                 set_setting("difficulty", diff)
-                difficulty = diff
-                flash("Difficulty saved.", "success")
+                msg = f"Difficulty set to {diff}."
 
         elif action == "create_round":
-            q = (request.form.get("question") or "").strip()
-            # close any old open rounds (safety)
-            cur.execute("UPDATE rounds SET status='closed', closed_at=? WHERE status='open'", (utc_now_iso(),))
-            cur.execute("""
-                INSERT INTO rounds(question, correct_song, correct_artist, correct_year, status, created_at)
-                VALUES(?,?,?,?, 'open', ?)
-            """, (
-                q,
-                (request.form.get("correct_song") or "").strip(),
-                (request.form.get("correct_artist") or "").strip(),
-                parse_int(request.form.get("correct_year")),
-                utc_now_iso()
-            ))
-            con.commit()
-            flash("Round created & opened.", "success")
+            question = (request.form.get("question") or "").strip()
+            # close any existing open round first
+            with db_connect() as con:
+                con.execute("UPDATE rounds SET status='closed', closed_at=? WHERE status='open'", (utc_now_iso(),))
+                con.execute(
+                    """
+                    INSERT INTO rounds(question,status,created_at)
+                    VALUES(?, 'open', ?)
+                    """,
+                    (question, utc_now_iso()),
+                )
+            msg = "Round created and opened."
 
         elif action == "set_answers":
-            r = get_open_round()
-            if not r:
-                flash("No open round.", "warning")
+            rid = request.form.get("round_id")
+            if not rid:
+                err = "No open round."
             else:
-                cur.execute("""
-                    UPDATE rounds
-                    SET correct_song=?, correct_artist=?, correct_year=?
-                    WHERE id=?
-                """, (
-                    (request.form.get("correct_song") or "").strip(),
-                    (request.form.get("correct_artist") or "").strip(),
-                    parse_int(request.form.get("correct_year")),
-                    r["id"]
-                ))
-                con.commit()
-                flash("Correct answers updated.", "success")
+                cs = (request.form.get("correct_song") or "").strip() or None
+                ca = (request.form.get("correct_artist") or "").strip() or None
+                cy_raw = (request.form.get("correct_year") or "").strip()
+                cy = None
+                if cy_raw:
+                    try:
+                        cy = int(cy_raw)
+                    except ValueError:
+                        cy = None
+                with db_connect() as con:
+                    con.execute(
+                        """
+                        UPDATE rounds
+                        SET correct_song=?, correct_artist=?, correct_year=?
+                        WHERE id=? AND status='open'
+                        """,
+                        (cs, ca, cy, int(rid)),
+                    )
+                msg = "Correct answers updated."
 
         elif action == "close_round":
-            r = get_open_round()
-            if not r:
-                flash("No open round.", "warning")
+            rid = request.form.get("round_id")
+            if not rid:
+                err = "No open round."
             else:
-                # Score this round
-                cur.execute("UPDATE rounds SET status='closed', closed_at=? WHERE id=?", (utc_now_iso(), r["id"]))
-                con.commit()
-                score_round(r["id"])
-                save_snapshot_for_round(r["id"])
-                flash("Round closed & scored.", "success")
+                rid = int(rid)
+                # Score + close
+                compute_and_store_round_scores(rid)
+                with db_connect() as con:
+                    con.execute(
+                        "UPDATE rounds SET status='closed', closed_at=? WHERE id=?",
+                        (utc_now_iso(), rid),
+                    )
+                save_standings_snapshot(rid)
+                msg = "Round closed and scored."
 
-        elif action == "reset_game_keep_players":
-            cur.execute("DELETE FROM guesses")
-            cur.execute("DELETE FROM standings_snapshots")
-            cur.execute("DELETE FROM rounds")
-            con.commit()
-            # unlock difficulty again
-            flash("Game reset (players kept).", "success")
+        elif action == "reset_game":
+            # Keep players, wipe rounds/guesses/history, unlock difficulty
+            with db_connect() as con:
+                con.execute("DELETE FROM guesses")
+                con.execute("DELETE FROM standings_history")
+                con.execute("DELETE FROM rounds")
+                con.execute("UPDATE settings SET value='easy' WHERE key='difficulty'")
+            msg = "Game reset. Players kept; rounds cleared."
 
-        elif action == "full_reset":
-            cur.execute("DELETE FROM guesses")
-            cur.execute("DELETE FROM standings_snapshots")
-            cur.execute("DELETE FROM rounds")
-            cur.execute("DELETE FROM players")
-            con.commit()
-            flash("Full reset done.", "success")
+    # Page data
+    open_round = get_open_round()
+    diff = get_setting("difficulty", "easy")
+    locked = difficulty_locked()
 
-    # Load view data
-    cur.execute("SELECT * FROM rounds ORDER BY id DESC LIMIT 20")
-    rounds = cur.fetchall()
+    with db_connect() as con:
+        players = con.execute("SELECT id, name, email, created_at FROM players ORDER BY name COLLATE NOCASE").fetchall()
 
-    cur.execute("SELECT * FROM players ORDER BY name COLLATE NOCASE ASC")
-    players = cur.fetchall()
+    played = []
+    if open_round:
+        with db_connect() as con:
+            played = con.execute(
+                """
+                SELECT p.name AS player, g.updated_at
+                FROM guesses g
+                JOIN players p ON p.id=g.player_id
+                WHERE g.round_id=?
+                ORDER BY p.name COLLATE NOCASE
+                """,
+                (open_round["id"],),
+            ).fetchall()
 
-    current_round = get_open_round()
-
-    # Who submitted to the current open round?
-    submissions = []
-    if current_round:
-        cur.execute("""
-            SELECT p.name AS player, g.submitted_at, g.guess_song, g.guess_artist, g.guess_year
-            FROM guesses g
-            JOIN players p ON p.id=g.player_id
-            WHERE g.round_id=?
-            ORDER BY g.submitted_at DESC
-        """, (current_round["id"],))
-        submissions = cur.fetchall()
-
-    con.close()
-
+    # Minimal admin UI embedded (keeps your request focused on the 5 templates)
     return render_template(
-        "admin.html",
-        rounds=rounds,
-        players=players,
-        current_round=current_round,
-        submissions=submissions,
-        difficulty=difficulty,
-        difficulty_locked=locked
+        "base.html",
+        player=current_player(),
+        content_override=render_template(
+            "_admin_inline.html",
+            msg=msg,
+            err=err,
+            open_round=open_round,
+            played=played,
+            players=players,
+            difficulty=diff,
+            locked=locked,
+        ),
     )
 
 
-def score_round(round_id: int):
-    con = db()
-    cur = con.cursor()
+# Inline template used by admin route
+# (so you don't have to manage another file right now)
+@app.context_processor
+def inject_admin_inline():
+    def admin_inline_template():
+        return """
+{% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
+{% if err %}<p class="err">{{ err }}</p>{% endif %}
 
-    cur.execute("SELECT * FROM rounds WHERE id=?", (round_id,))
-    r = cur.fetchone()
-    if not r:
-        con.close()
-        return
+<div class="card">
+  <h2>Admin</h2>
 
-    correct_song = (r["correct_song"] or "").strip()
-    correct_artist = (r["correct_artist"] or "").strip()
-    correct_year = r["correct_year"]
-    difficulty = get_setting("difficulty", "easy")
+  <h3>Difficulty (choose before game start)</h3>
+  <form method="post">
+    <input type="hidden" name="action" value="set_difficulty">
+    <select name="difficulty" {% if locked %}disabled{% endif %}>
+      <option value="easy" {% if difficulty=='easy' %}selected{% endif %}>Easy</option>
+      <option value="hard" {% if difficulty=='hard' %}selected{% endif %}>Hard</option>
+      <option value="extreme" {% if difficulty=='extreme' %}selected{% endif %}>Extreme</option>
+    </select>
+    <button class="btn" type="submit" {% if locked %}disabled{% endif %}>Save</button>
+    {% if locked %}<p class="muted">Locked after the first round is created.</p>{% endif %}
+  </form>
 
-    cur.execute("SELECT * FROM guesses WHERE round_id=?", (round_id,))
-    guesses = cur.fetchall()
+  <hr>
 
-    # For "easy" closest-rule we need to know if anyone is within 0-2
-    diffs = []
-    if correct_year is not None:
-        for g in guesses:
-            if g["guess_year"] is not None:
-                diffs.append(abs(int(g["guess_year"]) - int(correct_year)))
-    min_diff = min(diffs) if diffs else None
+  <h3>Create & open round</h3>
+  <form method="post">
+    <input type="hidden" name="action" value="create_round">
+    <label>Question</label>
+    <textarea name="question" rows="2" placeholder='e.g. "Song #3"'></textarea>
+    <button class="btn" type="submit">Create + open</button>
+  </form>
+</div>
 
-    for g in guesses:
-        pts_song = 0
-        pts_artist = 0
-        pts_year = 0
+<div class="card">
+  <h3>Open round</h3>
+  {% if open_round %}
+    <p><strong>#{{ open_round.id }}</strong> {{ open_round.question }}</p>
 
-        if correct_song and norm_text(g["guess_song"]) == norm_text(correct_song):
-            pts_song = 5
-        if correct_artist and norm_text(g["guess_artist"]) == norm_text(correct_artist):
-            pts_artist = 5
+    <form method="post" style="margin-top:10px;">
+      <input type="hidden" name="action" value="set_answers">
+      <input type="hidden" name="round_id" value="{{ open_round.id }}">
+      <label>Correct song</label>
+      <input name="correct_song" value="{{ open_round.correct_song or '' }}">
+      <label>Correct artist</label>
+      <input name="correct_artist" value="{{ open_round.correct_artist or '' }}">
+      <label>Correct year</label>
+      <input name="correct_year" value="{{ open_round.correct_year or '' }}">
+      <button class="btn" type="submit">Update correct answers</button>
+    </form>
 
-        if correct_year is not None and g["guess_year"] is not None:
-            diff = abs(int(g["guess_year"]) - int(correct_year))
+    <form method="post" style="margin-top:10px;">
+      <input type="hidden" name="action" value="close_round">
+      <input type="hidden" name="round_id" value="{{ open_round.id }}">
+      <button class="btn secondary" type="submit">Close & score</button>
+    </form>
 
-            if difficulty == "hard":
-                pts_year = score_year_hard(diff)
+    <h4 style="margin-top:14px;">Played this round</h4>
+    {% if played and played|length > 0 %}
+      <ul class="list">
+        {% for p in played %}
+          <li>{{ p.player }} <span class="muted">({{ p.updated_at }})</span></li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">No submissions yet.</p>
+    {% endif %}
+  {% else %}
+    <p class="muted">No open round.</p>
+  {% endif %}
+</div>
 
-            elif difficulty == "extreme":
-                pts_year = score_year_extreme(diff)
+<div class="card">
+  <h3>Reset game</h3>
+  <form method="post" onsubmit="return confirm('Reset rounds/guesses/history? Players kept.');">
+    <input type="hidden" name="action" value="reset_game">
+    <button class="btn danger" type="submit">Reset</button>
+  </form>
+</div>
 
-            else:  # easy
-                # normal mapping if someone is close (0-2)
-                if min_diff is not None and min_diff <= 2:
-                    pts_year = score_year_easy_individual(diff)
-                else:
-                    # nobody within 0-2 -> closest gets 1, others 0
-                    if min_diff is not None and diff == min_diff:
-                        pts_year = 1
-                    else:
-                        pts_year = 0
-
-        total = int(pts_song) + int(pts_artist) + int(pts_year)
-
-        cur.execute("""
-            UPDATE guesses
-            SET points_song=?, points_artist=?, points_year=?, total_points=?
-            WHERE id=?
-        """, (pts_song, pts_artist, pts_year, total, g["id"]))
-
-    con.commit()
-    con.close()
+<div class="card">
+  <h3>Players</h3>
+  {% if players and players|length > 0 %}
+    <table>
+      <thead><tr><th>Name</th><th>Email</th><th>Created</th></tr></thead>
+      <tbody>
+        {% for p in players %}
+          <tr><td>{{ p.name }}</td><td>{{ p.email or '' }}</td><td>{{ p.created_at }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No players yet.</p>
+  {% endif %}
+</div>
+"""
+    return {"_admin_inline_template": admin_inline_template}
 
 
-# ----------------------------
-# JSON APIs (Arduino / auto-refresh)
-# ----------------------------
-@app.get("/api/state")
-def api_state():
-    r = get_open_round()
-    return jsonify({
-        "open_round_id": int(r["id"]) if r else None,
-        "open_round_question": r["question"] if r else None,
-    })
+@app.get("/_admin_inline.html")
+def _admin_inline_html():
+    # Internal-only: renderable snippet for admin page
+    return render_template_string(app.context_processor_funcs[-1]()["_admin_inline_template"]())
 
-@app.get("/api/standings")
-def api_standings():
-    standings = compute_position_deltas(compute_standings())
-    last_round, last_guesses = get_last_closed_round_with_guesses()
 
-    payload = {
-        "standings": [{"rank": s["rank"], "player": s["player"], "points": s["points"], "delta": s["delta"]} for s in standings],
-        "last_round": None,
-        "last_round_guesses": []
-    }
-    if last_round:
-        payload["last_round"] = {
-            "id": int(last_round["id"]),
-            "question": last_round["question"],
-            "correct_song": last_round["correct_song"],
-            "correct_artist": last_round["correct_artist"],
-            "correct_year": last_round["correct_year"],
-        }
-        payload["last_round_guesses"] = [
-            {
-                "player": g["player"],
-                "guess_song": g["guess_song"],
-                "guess_artist": g["guess_artist"],
-                "guess_year": g["guess_year"],
-                "points_song": g["points_song"],
-                "points_artist": g["points_artist"],
-                "points_year": g["points_year"],
-                "total_points": g["total_points"],
-            }
-            for g in last_guesses
-        ]
-
-    # ensure UTF-8 content in JSON
-    resp = app.response_class(
-        response=jsonify(payload).get_data(as_text=False),
-        status=200,
-        mimetype="application/json"
-    )
-    return resp
+# Flask needs this import for render_template_string above
+from flask import render_template_string
 
 
 if __name__ == "__main__":
-    # local dev only
-    app.run(host="0.0.0.0", port=10000, debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
