@@ -1,31 +1,191 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="card">
-  <h2>Game</h2>
 
-  {% if open_round %}
-    <p><strong>Open round:</strong> #{{ open_round["id"] }}</p>
-    <p><strong>Question:</strong> {{ open_round["question"] or "-" }}</p>
+{% if request.args.get("err") == "enter_one" %}
+  <div class="card">
+    <p class="err">Please enter at least one field (song, artist, or year).</p>
+  </div>
+{% endif %}
 
-    <form method="post" action="{{ url_for('submit') }}">
-      <label>Song</label>
-      <input type="text" name="guess_song">
+<div class="grid">
 
-      <label>Artist</label>
-      <input type="text" name="guess_artist">
+  <!-- LEFT: Play -->
+  <div class="card">
+    <h2>Play</h2>
+    <p class="muted">Difficulty: <strong>{{ difficulty }}</strong></p>
 
-      <label>Year</label>
-      <input type="number" name="guess_year">
+    {% if open_round %}
+      <p><strong>Round #{{ open_round.id }}</strong></p>
+      <p class="mono">{{ open_round.question }}</p>
 
-      <button class="btn" type="submit">Submit</button>
-    </form>
-  {% else %}
-    <p>No open round right now.</p>
-  {% endif %}
+      {% if my_guess %}
+        <p class="ok">Submitted ✅ (you can re-submit to update while the round is open)</p>
+      {% else %}
+        <p class="muted">Not submitted yet</p>
+      {% endif %}
 
-  <hr>
+      <form method="post" action="{{ url_for('submit') }}">
+        <label>Song</label>
+        <input name="guess_song" value="{{ my_guess.guess_song if my_guess else '' }}" placeholder="Song title">
 
-  <p><a href="{{ url_for('standings_page') }}">Standings</a></p>
-  <p><a href="{{ url_for('logout') }}">Change player</a></p>
+        <label>Artist</label>
+        <input name="guess_artist" value="{{ my_guess.guess_artist if my_guess else '' }}" placeholder="Artist name">
+
+        <label>Year</label>
+        <input name="guess_year" inputmode="numeric" value="{{ my_guess.guess_year if my_guess and my_guess.guess_year is not none else '' }}" placeholder="e.g. 1976">
+
+        <div class="spacer"></div>
+        <button class="btn" type="submit">Submit / Update</button>
+      </form>
+
+      <p class="tiny muted" style="margin-top:10px;">
+        Page auto-refreshes. If a new round opens, it will appear here.
+      </p>
+    {% else %}
+      <p class="muted">No open round right now. Refresh or wait for the admin to open one.</p>
+    {% endif %}
+  </div>
+
+  <!-- RIGHT: Standings -->
+  <div class="card">
+    <h2>Standings</h2>
+    <table id="standingsTable">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Player</th>
+          <th>Pts</th>
+          <th>Δ</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in standings %}
+          {% set cls = 'same' %}
+          {% if s.delta > 0 %}{% set cls='up' %}{% elif s.delta < 0 %}{% set cls='down' %}{% endif %}
+          <tr>
+            <td>{{ s.rank }}</td>
+            <td>{{ s.player }}</td>
+            <td>{{ s.points }}</td>
+            <td class="delta {{ cls }}">
+              {% if s.delta > 0 %}+{{ s.delta }}{% elif s.delta < 0 %}{{ s.delta }}{% else %}0{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <p class="tiny muted" style="margin-top:10px;">Δ compares the last two closed rounds (position change).</p>
+  </div>
+
 </div>
+
+<!-- Last closed round: correct answer + everyone's answers -->
+<div class="card" id="lastRoundCard">
+  <h2>Last Round Results</h2>
+
+  {% if last_closed %}
+    <p><strong>Round #{{ last_closed.id }}</strong> <span class="muted">({{ last_closed.closed_at }})</span></p>
+    <p class="mono">{{ last_closed.question }}</p>
+
+    <div class="row">
+      <span class="pill">Correct Song: <strong>{{ correct.song }}</strong></span>
+      <span class="pill">Correct Artist: <strong>{{ correct.artist }}</strong></span>
+      <span class="pill">Correct Year: <strong>{{ correct.year }}</strong></span>
+    </div>
+
+    <div class="spacer"></div>
+    <table id="lastResultsTable">
+      <thead>
+        <tr>
+          <th>Player</th>
+          <th>Guess Song</th>
+          <th>Guess Artist</th>
+          <th>Guess Year</th>
+          <th>Pts</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in last_results %}
+          <tr>
+            <td>{{ r.player }}</td>
+            <td>{{ r.guess_song or '' }}</td>
+            <td>{{ r.guess_artist or '' }}</td>
+            <td>{{ r.guess_year if r.guess_year is not none else '' }}</td>
+            <td>{{ r.total_points }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No closed rounds yet.</p>
+  {% endif %}
+</div>
+
+<script>
+  // Auto-refresh (no live sockets; just polling)
+  const REFRESH_MS = 5000;
+
+  function deltaClass(d){
+    if (d > 0) return 'up';
+    if (d < 0) return 'down';
+    return 'same';
+  }
+
+  async function refreshStandings(){
+    try{
+      const res = await fetch("/api/standings", { cache: "no-store" });
+      const rows = await res.json();
+      const tbody = document.querySelector("#standingsTable tbody");
+      if (!tbody) return;
+
+      tbody.innerHTML = rows.map(r => `
+        <tr>
+          <td>${r.rank}</td>
+          <td>${r.player}</td>
+          <td>${r.points}</td>
+          <td class="delta ${deltaClass(r.delta)}">${r.delta>0?("+"+r.delta):r.delta}</td>
+        </tr>
+      `).join("");
+    }catch(e){
+      // silence is golden for polling
+    }
+  }
+
+  async function refreshState(){
+    try{
+      const res = await fetch("/api/state", { cache: "no-store" });
+      const st = await res.json();
+      if (st.needs_register) return;
+      // If open round changes, easiest is to reload the page
+      // (keeps logic simple & reliable)
+      const currentOpen = {{ open_round.id if open_round else 'null' }};
+      const newOpen = st.open_round ? st.open_round.id : null;
+      if (currentOpen !== newOpen){
+        location.reload();
+      }
+    }catch(e){}
+  }
+
+  async function refreshLastRound(){
+    try{
+      const res = await fetch("/api/last_round", { cache: "no-store" });
+      const data = await res.json();
+      if (!data.ok || !data.has_round) return;
+
+      // If you want full DOM patching later, we can do it.
+      // For now, reload if last round id changed.
+      const currentLast = {{ last_closed.id if last_closed else 'null' }};
+      if (currentLast !== data.round.id){
+        location.reload();
+      }
+    }catch(e){}
+  }
+
+  setInterval(() => {
+    refreshState();
+    refreshStandings();
+    refreshLastRound();
+  }, REFRESH_MS);
+</script>
+
 {% endblock %}
