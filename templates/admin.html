@@ -1,161 +1,93 @@
 {% extends "base.html" %}
 {% block content %}
+
 <div class="card">
-  <h2>Hitster Admin</h2>
+  <h2>Admin</h2>
 
-  <div class="row">
-    <div>
-      <h3>Difficulty</h3>
-      {% if difficulty_locked %}
-        <div class="alert">Difficulty is locked: <strong>{{ difficulty }}</strong></div>
-      {% else %}
-        <form method="post">
-          <input type="hidden" name="action" value="set_difficulty">
-          <select name="difficulty">
-            <option value="easy" {% if difficulty=='easy' %}selected{% endif %}>Easy</option>
-            <option value="hard" {% if difficulty=='hard' %}selected{% endif %}>Hard</option>
-            <option value="extreme" {% if difficulty=='extreme' %}selected{% endif %}>Extreme</option>
-          </select>
-          <button class="btn" type="submit">Save</button>
-        </form>
-      {% endif %}
-    </div>
+  {% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
+  {% if err %}<p class="err">{{ err }}</p>{% endif %}
 
-    <div style="text-align:right;">
-      <a class="btn secondary" href="{{ url_for('admin_logout') }}">Logout</a>
-    </div>
-  </div>
+  <h3>Difficulty (locked after first round is created)</h3>
+  <form method="post">
+    <input type="hidden" name="action" value="set_difficulty">
+    <select name="difficulty" {% if locked %}disabled{% endif %}>
+      <option value="easy" {% if difficulty=='easy' %}selected{% endif %}>Easy</option>
+      <option value="hard" {% if difficulty=='hard' %}selected{% endif %}>Hard</option>
+      <option value="extreme" {% if difficulty=='extreme' %}selected{% endif %}>Extreme</option>
+    </select>
+    <button class="btn" type="submit" {% if locked %}disabled{% endif %}>Save</button>
+  </form>
+</div>
 
-  <hr />
-
-  <h3>Create & open new round</h3>
+<div class="card">
+  <h3>Create & open a new round</h3>
+  <p class="muted">You can only have ONE open round at a time.</p>
   <form method="post">
     <input type="hidden" name="action" value="create_round">
-
-    <label>Question (what players see)</label>
-    <textarea name="question" rows="2" placeholder="e.g. Song #3"></textarea>
-
-    <label>Correct song (optional)</label>
-    <input type="text" name="correct_song" placeholder="Exact song title">
-
-    <label>Correct artist (optional)</label>
-    <input type="text" name="correct_artist" placeholder="Exact artist name">
-
-    <label>Correct year (optional)</label>
-    <input type="number" name="correct_year" placeholder="e.g. 1976">
-
-    <button type="submit" class="btn">Create + open</button>
+    <label>Question</label>
+    <textarea name="question" rows="2" placeholder='e.g. "Song #3"'></textarea>
+    <button class="btn" type="submit">Create + open</button>
   </form>
 </div>
 
 <div class="card">
   <h3>Current open round</h3>
-  {% if current_round %}
-    <p><strong>ID:</strong> {{ current_round["id"] }}</p>
-    <p><strong>Question:</strong> {{ current_round["question"] }}</p>
+  {% if open_round %}
+    <p><strong>#{{ open_round.id }}</strong> {{ open_round.question or '' }}</p>
 
-    <form method="post" style="margin-top:8px; margin-bottom: 8px;">
+    <form method="post" style="margin-top:10px;">
       <input type="hidden" name="action" value="set_answers">
-
       <label>Correct song</label>
-      <input type="text" name="correct_song" value="{{ current_round['correct_song'] or '' }}">
-
+      <input name="correct_song" value="{{ open_round.correct_song or '' }}">
       <label>Correct artist</label>
-      <input type="text" name="correct_artist" value="{{ current_round['correct_artist'] or '' }}">
-
+      <input name="correct_artist" value="{{ open_round.correct_artist or '' }}">
       <label>Correct year</label>
-      <input type="number" name="correct_year" value="{{ current_round['correct_year'] or '' }}">
-
-      <button type="submit" class="btn">Update correct answers</button>
+      <input name="correct_year" value="{{ open_round.correct_year or '' }}">
+      <button class="btn" type="submit">Update correct answers</button>
     </form>
 
-    <form method="post">
+    <form method="post" style="margin-top:10px;">
       <input type="hidden" name="action" value="close_round">
-      <button type="submit" class="btn secondary">Close & score</button>
+      <button class="btn secondary" type="submit">Close & score</button>
     </form>
 
-    <hr />
-    <h4>Submissions ({{ submissions|length }})</h4>
-    {% if submissions|length == 0 %}
-      <p class="muted">No one submitted yet.</p>
+    <h4 style="margin-top:14px;">Players who submitted</h4>
+    {% if played and played|length > 0 %}
+      <ul class="list">
+        {% for p in played %}
+          <li>{{ p.player }} <span class="muted">({{ p.updated_at }})</span></li>
+        {% endfor %}
+      </ul>
     {% else %}
-      <table>
-        <thead>
-          <tr>
-            <th>Player</th>
-            <th>Time</th>
-            <th>Song</th>
-            <th>Artist</th>
-            <th>Year</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for s in submissions %}
-          <tr>
-            <td>{{ s["player"] }}</td>
-            <td class="muted">{{ s["submitted_at"] }}</td>
-            <td>{{ s["guess_song"] or "-" }}</td>
-            <td>{{ s["guess_artist"] or "-" }}</td>
-            <td>{{ s["guess_year"] or "-" }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <p class="muted">No submissions yet.</p>
     {% endif %}
-
   {% else %}
-    <p>No open round.</p>
+    <p class="muted">No open round.</p>
   {% endif %}
 </div>
 
 <div class="card">
-  <h3>Players ({{ players|length }})</h3>
-  <div class="muted">Players are unique by name.</div>
-  <ul>
-    {% for p in players %}
-      <li>{{ p["name"] }} <span class="muted">({{ p["email"] or "no email" }})</span></li>
-    {% endfor %}
-  </ul>
-
-  <hr />
-  <h3>Reset</h3>
-  <form method="post" style="display:flex; gap:10px; flex-wrap:wrap;">
-    <button class="btn secondary" type="submit" name="action" value="reset_game_keep_players">
-      Reset game (keep players)
-    </button>
-    <button class="btn danger" type="submit" name="action" value="full_reset">
-      Full reset (delete players)
-    </button>
+  <h3>Reset game</h3>
+  <form method="post" onsubmit="return confirm('Reset rounds/guesses/history? Players kept.');">
+    <input type="hidden" name="action" value="reset_game">
+    <button class="btn danger" type="submit">Reset</button>
   </form>
 </div>
 
 <div class="card">
-  <h3>Recent rounds</h3>
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Status</th>
-        <th>Question</th>
-        <th>Song</th>
-        <th>Artist</th>
-        <th>Year</th>
-        <th>Created</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in rounds %}
-      <tr>
-        <td>{{ r["id"] }}</td>
-        <td>{{ r["status"] }}</td>
-        <td>{{ r["question"] }}</td>
-        <td>{{ r["correct_song"] or "-" }}</td>
-        <td>{{ r["correct_artist"] or "-" }}</td>
-        <td>{{ r["correct_year"] or "-" }}</td>
-        <td class="muted">{{ r["created_at"] }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <h3>Players</h3>
+  {% if players and players|length > 0 %}
+    <table>
+      <thead><tr><th>Name</th><th>Created</th></tr></thead>
+      <tbody>
+        {% for p in players %}
+          <tr><td>{{ p.name }}</td><td>{{ p.created_at }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No players yet.</p>
+  {% endif %}
 </div>
+
 {% endblock %}
