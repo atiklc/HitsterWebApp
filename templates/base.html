@@ -2,60 +2,41 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Hitster</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ title or "Hitster" }}</title>
   <style>
-    :root { color-scheme: dark; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 0; background:#0b0d10; color:#eef2f7; }
-    a { color:#9fd3ff; }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
-    .card { background:#121620; border:1px solid #232a3a; border-radius:14px; padding:16px; margin-bottom:16px; box-shadow: 0 10px 20px rgba(0,0,0,.25); }
-    .grid { display:grid; grid-template-columns: 1fr; gap: 16px; }
-    @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
-    label { display:block; margin:10px 0 6px; color:#cdd6e5; font-size: 14px; }
-    input, textarea, select { width:100%; padding:10px; border-radius:10px; border:1px solid #2a3347; background:#0f1320; color:#eef2f7; }
-    .btn { padding:10px 14px; border-radius:10px; border:1px solid #2a3347; background:#1b5cff; color:white; cursor:pointer; font-weight:600; }
-    .btn.secondary { background:#1a2336; }
-    .btn.danger { background:#b61d2a; border-color:#7e141d; }
-    .muted { color:#9aa6bc; font-size: 13px; }
-    table { width:100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { border-bottom:1px solid #232a3a; padding:8px; text-align:left; vertical-align: top; }
-    th { color:#b9c5dc; font-size: 13px; }
-    .alert { padding:10px; border-radius:10px; background:#1a2336; border:1px solid #2a3347; margin:10px 0; }
-    .alert.success { background:#0f2a19; border-color:#1f6a3b; }
-    .alert.error { background:#2a0f14; border-color:#7e141d; }
-    .pill { display:inline-block; padding:4px 10px; border-radius:999px; background:#1a2336; border:1px solid #2a3347; color:#b9c5dc; font-size:12px; }
-    .row { display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; }
-    .delta-up { color:#35d07f; font-weight:700; }
-    .delta-down { color:#ff5b6e; font-weight:700; }
-    .delta-same { color:#eef2f7; opacity:.9; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:#0b0f16;color:#e8eefc}
+    a{color:#9cc2ff;text-decoration:none}
+    .topbar{display:flex;gap:14px;align-items:center;padding:12px 16px;background:#0f1725;border-bottom:1px solid #22304a}
+    .topbar .spacer{flex:1}
+    .container{max-width:980px;margin:0 auto;padding:16px}
+    .card{background:#121c2e;border:1px solid #22304a;border-radius:14px;padding:14px;margin-bottom:12px}
+    .btn{background:#2b6cff;border:none;color:white;padding:10px 12px;border-radius:10px;cursor:pointer}
+    .btn.secondary{background:#24314a}
+    input,select,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #22304a;background:#0f1725;color:#e8eefc;box-sizing:border-box}
+    label{display:block;margin:10px 0 6px 0;color:#b8c6e6}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <div class="card">
-          {% for cat,msg in messages %}
-            <div class="alert {% if cat=='success' %}success{% elif cat=='error' %}error{% endif %}">{{ msg }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
-    {% endwith %}
+  <div class="topbar">
+    <strong>🎵 Hitster</strong>
+    <a href="{{ url_for('register') }}">Register</a>
+    <a href="{{ url_for('game') }}">Game</a>
+    <a href="{{ url_for('standings') }}">Standings</a>
+    <div class="spacer"></div>
 
-    {% if show_login %}
-      <div class="card">
-        <h2>Admin login</h2>
-        {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
-        <form method="post">
-          <label>Password</label>
-          <input type="password" name="password" required />
-          <button class="btn" type="submit">Login</button>
-        </form>
-      </div>
+    {% if session.get("is_admin") %}
+      <a href="{{ url_for('admin') }}">Admin</a>
+      <form method="post" action="{{ url_for('admin_logout') }}" style="margin:0">
+        <button class="btn secondary" type="submit">Logout</button>
+      </form>
     {% else %}
-      {% block content %}{% endblock %}
+      <a href="{{ url_for('admin_login_get') }}">Admin login</a>
     {% endif %}
+  </div>
+
+  <div class="container">
+    {% block content %}{% endblock %}
   </div>
 </body>
 </html>
