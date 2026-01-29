@@ -2,24 +2,24 @@
 {% block content %}
 <div class="card">
   <h2>Register</h2>
-  <p class="muted">Use the same Player Name for the whole game.</p>
+  <p class="muted">Your <strong>Player Name</strong> is your identity for the whole game. Email is optional (registration only).</p>
 
   {% if error %}
-    <div class="alert error">{{ error }}</div>
+    <p class="err">{{ error }}</p>
   {% endif %}
 
   <form method="post" autocomplete="on">
-    <label>Email (only for registration)</label>
-    <input type="email" name="email" placeholder="name@example.com" />
+    <label>Email (optional)</label>
+    <input type="email" name="email" placeholder="name@example.com" autocomplete="email">
 
-    <label>Player name</label>
-    <input type="text" name="name" maxlength="30" placeholder="e.g. Ham Hum Şaralop" required />
+    <label>Player Name</label>
+    <input type="text" name="player_name" placeholder="e.g. Ham Hum Saralop" required autocomplete="nickname">
 
-    <button class="btn" type="submit">Register</button>
+    <div class="spacer"></div>
+    <button class="btn" type="submit">Register / Continue</button>
   </form>
 
-  <p class="muted" style="margin-top:10px;">
-    Tip: If you want to test multiple players on one device, use Private/Incognito tabs.
-  </p>
+  <div class="spacer"></div>
+  <p class="tiny muted">Already registered on this server? You can also use <a href="{{ url_for('switch') }}">Switch</a>.</p>
 </div>
 {% endblock %}
