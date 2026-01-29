@@ -397,6 +397,30 @@ def logout():
     session.clear()
     return redirect(url_for("register"))
 
+@app.get("/admin/login")
+def admin_login_get():
+    return render_template("admin_login.html", error=None)
+
+@app.post("/admin/login")
+def admin_login_post():
+    pw = (request.form.get("password") or "").strip()
+    if not pw:
+        return render_template("admin_login.html", error="Password required.")
+    if pw != os.environ.get("ADMIN_PASSWORD", ""):
+        return render_template("admin_login.html", error="Wrong password.")
+    session["is_admin"] = True
+    return redirect(url_for("admin"))
+
+@app.post("/admin/logout")
+def admin_logout():
+    session.pop("is_admin", None)
+    return redirect(url_for("register"))
+
+def require_admin():
+    if not session.get("is_admin"):
+        return redirect(url_for("admin_login_get"))
+    return None
+
 
 @app.get("/game")
 def game():
@@ -651,7 +675,9 @@ def admin_logout():
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
-    require_admin()
+    guard = require_admin()
+    if guard:
+        return guard
 
     msg = None
     err = None
