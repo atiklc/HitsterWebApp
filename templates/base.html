@@ -8,13 +8,19 @@
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:#0b0f16;color:#e8eefc}
     a{color:#9cc2ff;text-decoration:none}
     .topbar{display:flex;gap:14px;align-items:center;padding:12px 16px;background:#0f1725;border-bottom:1px solid #22304a}
-    .topbar .spacer{flex:1}
+    .spacer{flex:1}
     .container{max-width:980px;margin:0 auto;padding:16px}
     .card{background:#121c2e;border:1px solid #22304a;border-radius:14px;padding:14px;margin-bottom:12px}
     .btn{background:#2b6cff;border:none;color:white;padding:10px 12px;border-radius:10px;cursor:pointer}
     .btn.secondary{background:#24314a}
+    .btn.danger{background:#a83232}
     input,select,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #22304a;background:#0f1725;color:#e8eefc;box-sizing:border-box}
     label{display:block;margin:10px 0 6px 0;color:#b8c6e6}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #22304a;text-align:left}
+    .muted{color:#a9b7d6}
+    .err{color:#ff9aa2}
+    .ok{color:#8dffb2}
   </style>
 </head>
 <body>
@@ -22,7 +28,7 @@
     <strong>🎵 Hitster</strong>
     <a href="{{ url_for('register') }}">Register</a>
     <a href="{{ url_for('game') }}">Game</a>
-    <a href="{{ url_for('standings') }}">Standings</a>
+    <a href="{{ url_for('switch') }}">Switch player</a>
     <div class="spacer"></div>
 
     {% if session.get("is_admin") %}
@@ -37,6 +43,9 @@
 
   <div class="container">
     {% block content %}{% endblock %}
+    {% if content_override %}
+      {{ content_override|safe }}
+    {% endif %}
   </div>
 </body>
 </html>
