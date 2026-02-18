@@ -52,24 +52,13 @@
     border:0;
     cursor:pointer;
   }
-  @keyframes flashUp {
-    0%   { background: rgba(48, 209, 88, 0.28); }
-    100% { background: transparent; }
-  }
-  @keyframes flashDown {
-    0%   { background: rgba(255, 69, 58, 0.26); }
-    100% { background: transparent; }
-  }
-  tr.flash-up   { animation: flashUp 1.2s ease-out 1; }
-  tr.flash-down { animation: flashDown 1.2s ease-out 1; }
 </style>
 
-<!-- Optional landscape hint -->
 <div class="rotate-hint" id="rotateHint">
   <div class="box">
     <h3>Rotate to landscape</h3>
     <p>For the best view (Guess + Standings side-by-side), rotate your device.</p>
-    <button onclick="document.getElementById('rotateHint').style.dis='none'">Continue anyway</button>
+    <button onclick="document.getElementById('rotateHint').style.display='none'">Continue anyway</button>
   </div>
 </div>
 
@@ -84,7 +73,7 @@
       · <span class="pill" id="statePill">live</span>
     </p>
 
-    {% if request.args.get("err") == "enter_one" %}
+    {% if err == "enter_one" %}
       <p class="err">Please enter at least one field (song, artist, or year).</p>
     {% endif %}
 
@@ -94,7 +83,7 @@
       </p>
     {% endif %}
 
-    {% if request.args.get("msg") == "ended" %}
+    {% if msg == "ended" %}
       <p class="err">Game is finished. Submissions are locked.</p>
     {% endif %}
 
@@ -170,7 +159,6 @@
 
 </div>
 
-<!-- BELOW: last round results (optional, full width) -->
 {% if last_closed %}
   <div class="card" style="margin-top:16px;">
     <h2>Last round results</h2>
@@ -217,7 +205,7 @@
 {% endif %}
 
 <script>
-  // ---- Soft "landscape hint"
+  // Landscape hint
   const hint = document.getElementById("rotateHint");
   function updateHint(){
     const portrait = window.matchMedia && window.matchMedia("(orientation: portrait)").matches;
@@ -226,17 +214,13 @@
   updateHint();
   window.addEventListener("resize", updateHint);
 
-  const MY_NAME = {{ player.name|tojson }};
-  let lastMyPoints = null; // prevents flashing on first load
-
-  // ---- Helpers
   function esc(s){
     return String(s ?? "").replace(/[&<>"']/g, m => ({
       "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
     }[m]));
   }
 
-  // ---- Auto-refresh standings
+  // Auto-refresh standings
   const standingsBody = document.getElementById("standingsBody");
   const standingsLastUpdate = document.getElementById("standingsLastUpdate");
   const standingsPill = document.getElementById("standingsPill");
@@ -247,46 +231,26 @@
       if(!res.ok) { standingsPill.textContent = "error"; return; }
       const rows = await res.json(); // [{rank,player,points,delta}]
       const rowsArr = rows || [];
-let myNewPoints = null;
 
-const html = rowsArr.map(r => {
-  const playerName = String(r.player || "");
-  const points = Number(r.points || 0);
+      const html = rowsArr.map(r => {
+        const d = Number(r.delta || 0);
+        let deltaHtml = `<span class="delta same">0</span>`;
+        if(d > 0) deltaHtml = `<span class="delta up">+${d}</span>`;
+        if(d < 0) deltaHtml = `<span class="delta down">${d}</span>`;
 
-  // detect my row
-  const isMe = playerName.trim().toLowerCase() === String(MY_NAME).trim().toLowerCase();
-  if (isMe) myNewPoints = points;
+        return `
+          <tr>
+            <td>${esc(r.rank)}</td>
+            <td>${esc(r.player)}</td>
+            <td><strong>${esc(Number(r.points || 0))}</strong></td>
+            <td>${deltaHtml}</td>
+          </tr>
+        `;
+      }).join("");
 
-  // delta coloring already exists
-  const d = Number(r.delta || 0);
-  let deltaHtml = `<span class="delta same">0</span>`;
-  if(d > 0) deltaHtml = `<span class="delta up">+${d}</span>`;
-  if(d < 0) deltaHtml = `<span class="delta down">${d}</span>`;
-
-  // flash only my row when points changed
-  let flashClass = "";
-  if (isMe && lastMyPoints !== null && myNewPoints !== null && myNewPoints !== lastMyPoints) {
-    flashClass = (myNewPoints > lastMyPoints) ? "flash-up" : "flash-down";
-  }
-
-  return `
-    <tr class="${flashClass}">
-      <td>${esc(r.rank)}</td>
-      <td>${esc(playerName)}</td>
-      <td><strong>${esc(points)}</strong></td>
-      <td>${deltaHtml}</td>
-    </tr>
-  `;
-}).join("");
-
-standingsBody.innerHTML = html || `<tr><td colspan="4" class="muted">No players yet.</td></tr>`;
-
-// update last points AFTER rendering
-if (myNewPoints !== null) lastMyPoints = myNewPoints;
-
-standingsLastUpdate.textContent = new Date().toLocaleTimeString();
-standingsPill.textContent = "auto";
-
+      standingsBody.innerHTML = html || `<tr><td colspan="4" class="muted">No players yet.</td></tr>`;
+      standingsLastUpdate.textContent = new Date().toLocaleTimeString();
+      standingsPill.textContent = "auto";
     }catch(e){
       standingsPill.textContent = "offline";
     }
@@ -295,8 +259,7 @@ standingsPill.textContent = "auto";
   refreshStandings();
   setInterval(refreshStandings, 5000);
 
-  // ---- Auto-detect new round open/close
-  // If round id changes, reload the page so the form updates safely.
+  // Auto-detect new round open/close
   let currentRoundId = {{ open_round.id if open_round else "null" }};
   const statePill = document.getElementById("statePill");
   const roundPill = document.getElementById("roundPill");
@@ -317,21 +280,22 @@ standingsPill.textContent = "auto";
       const open = data.open_round;
       const newId = open ? Number(open.id) : null;
 
-      // If the round changed (opened/closed/new id), reload cleanly.
+      // round changed
       if(newId !== currentRoundId){
         window.location.reload();
         return;
       }
 
-      // Same round: just update small UI bits (no touching inputs).
       if(open){
-        roundPill.textContent = "#" + open.id;
-        if(open.question !== undefined){
-          roundQuestion.innerHTML = `<strong>#${esc(open.id)}</strong> ${esc(open.question)}`;
-        }
-        submitStatus.textContent = open.submitted ? "Submitted ✅ (you can still edit)" : "Not submitted yet";
-      }else{
-        roundPill.textContent = "none";
+        if(roundPill) roundPill.textContent = "#" + open.id;
+        if(roundQuestion) roundQuestion.innerHTML = `<strong>#${esc(open.id)}</strong> ${esc(open.question || "")}`;
+        if(submitStatus) submitStatus.textContent = open.submitted ? "Submitted ✅ (you can still edit)" : "Not submitted yet";
+      }
+
+      // game ended from admin -> reload to hide form
+      if(data.game_status === "ended"){
+        window.location.reload();
+        return;
       }
 
       statePill.textContent = "live";
