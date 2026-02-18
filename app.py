@@ -17,7 +17,7 @@ DB_PATH = os.environ.get("DB_PATH") or os.path.join(APP_DIR, "hitster.db")
 app = Flask(__name__, template_folder="templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "0987654321")  # set on Render!
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")  # set on Render!
 
 
 # =============================
@@ -113,7 +113,12 @@ def init_db() -> None:
         );
         """
     )
+
+    # Defaults
     con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('difficulty','easy')")
+    con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('game_status','running')")  # running|ended
+    con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('ended_at','')")
+
     con.commit()
 
 
@@ -127,7 +132,6 @@ def _ensure_db_once_per_request():
 # =============================
 @app.after_request
 def no_cache(resp):
-    # Prevent Cloudflare/proxies from caching pages across users/sessions
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
@@ -152,6 +156,29 @@ def set_setting(key: str, value: str) -> None:
         (key, value),
     )
     con.commit()
+
+
+def game_status() -> str:
+    s = get_setting("game_status", "running").strip().lower()
+    return s if s in ("running", "ended") else "running"
+
+
+def ended_at() -> str:
+    return get_setting("ended_at", "")
+
+
+def is_game_ended() -> bool:
+    return game_status() == "ended"
+
+
+def set_game_ended():
+    set_setting("game_status", "ended")
+    set_setting("ended_at", utc_now_iso())
+
+
+def set_game_running():
+    set_setting("game_status", "running")
+    set_setting("ended_at", "")
 
 
 def difficulty_locked() -> bool:
@@ -183,7 +210,6 @@ def get_last_closed_round():
 # =============================
 def score_year(diff: int, difficulty: str) -> int:
     if difficulty == "easy":
-        # 5..1, no negatives
         if diff == 0: return 5
         if diff == 1: return 4
         if diff == 2: return 3
@@ -352,7 +378,6 @@ def register():
             error = "Player name is required."
         else:
             con = get_db()
-            # Case-insensitive "login" if name exists
             row = con.execute(
                 "SELECT id, name FROM players WHERE name=? COLLATE NOCASE",
                 (name,),
@@ -427,7 +452,6 @@ def game():
         s["rank"] = i
         s["delta"] = int(delta_map.get(s["player_id"], 0))
 
-    # Last closed round results
     last_results = []
     correct = None
     if last_closed:
@@ -450,7 +474,6 @@ def game():
         ).fetchall()
 
     difficulty = get_setting("difficulty", "easy")
-    err = request.args.get("err")
 
     return render_template(
         "game.html",
@@ -462,7 +485,10 @@ def game():
         correct=correct,
         last_results=last_results,
         difficulty=difficulty,
-        err=err,
+        status=game_status(),
+        ended_at=ended_at(),
+        err=request.args.get("err"),
+        msg=request.args.get("msg"),
     )
 
 
@@ -471,6 +497,9 @@ def submit():
     player = current_player()
     if not player:
         return redirect(url_for("register"))
+
+    if is_game_ended():
+        return redirect(url_for("game", msg="ended"))
 
     con = get_db()
     open_round = get_open_round()
@@ -486,7 +515,6 @@ def submit():
         try:
             guess_year = int(guess_year_raw)
         except ValueError:
-            # treat as empty
             guess_year = None
             guess_year_raw = ""
 
@@ -518,16 +546,6 @@ def submit():
     return redirect(url_for("game"))
 
 
-@app.get("/standings")
-def standings():
-    standings = compute_standings()
-    delta_map = get_rank_delta_for_latest()
-    for i, s in enumerate(standings, start=1):
-        s["rank"] = i
-        s["delta"] = int(delta_map.get(s["player_id"], 0))
-    return render_template("standings.html", standings=standings, player=current_player())
-
-
 # =============================
 # API (Arduino + auto refresh)
 # =============================
@@ -544,6 +562,8 @@ def api_state():
         "difficulty": get_setting("difficulty", "easy"),
         "server_time": utc_now_iso(),
         "open_round": None,
+        "game_status": game_status(),
+        "ended_at": ended_at(),
     }
 
     if open_round:
@@ -624,9 +644,9 @@ def api_last_round():
     }
     return jsonify(payload), 200
 
+
 @app.get("/api/admin/open_round_guesses")
 def api_admin_open_round_guesses():
-    # Admin-only JSON endpoint for live tracking
     if not session.get("is_admin"):
         return jsonify({"ok": False, "error": "unauthorized"}), 403
 
@@ -665,6 +685,8 @@ def api_admin_open_round_guesses():
             }
             for r in rows
         ],
+        "game_status": game_status(),
+        "ended_at": ended_at(),
     }
     return jsonify(payload), 200
 
@@ -724,7 +746,9 @@ def admin():
                 msg = f"Difficulty set to {diff}."
 
         elif action == "create_round":
-            if get_open_round():
+            if is_game_ended():
+                err = "Game is ended. Resume or Reset to create new rounds."
+            elif get_open_round():
                 err = "There is already an open round. Close it first."
             else:
                 question = (request.form.get("question") or "").strip()
@@ -739,52 +763,82 @@ def admin():
                 msg = "Round created and opened."
 
         elif action == "set_answers":
-            open_round = get_open_round()
-            if not open_round:
-                err = "No open round."
+            if is_game_ended():
+                err = "Game is ended. No changes allowed."
             else:
-                cs = (request.form.get("correct_song") or "").strip() or None
-                ca = (request.form.get("correct_artist") or "").strip() or None
-                cy_raw = (request.form.get("correct_year") or "").strip()
-                cy = None
-                if cy_raw:
-                    try:
-                        cy = int(cy_raw)
-                    except ValueError:
-                        cy = None
+                open_round = get_open_round()
+                if not open_round:
+                    err = "No open round."
+                else:
+                    cs = (request.form.get("correct_song") or "").strip() or None
+                    ca = (request.form.get("correct_artist") or "").strip() or None
+                    cy_raw = (request.form.get("correct_year") or "").strip()
+                    cy = None
+                    if cy_raw:
+                        try:
+                            cy = int(cy_raw)
+                        except ValueError:
+                            cy = None
 
-                con.execute(
-                    """
-                    UPDATE rounds
-                    SET correct_song=?, correct_artist=?, correct_year=?
-                    WHERE id=? AND status='open'
-                    """,
-                    (cs, ca, cy, open_round["id"]),
-                )
-                con.commit()
-                msg = "Correct answers updated."
+                    con.execute(
+                        """
+                        UPDATE rounds
+                        SET correct_song=?, correct_artist=?, correct_year=?
+                        WHERE id=? AND status='open'
+                        """,
+                        (cs, ca, cy, open_round["id"]),
+                    )
+                    con.commit()
+                    msg = "Correct answers updated."
 
         elif action == "close_round":
-            open_round = get_open_round()
-            if not open_round:
-                err = "No open round."
+            if is_game_ended():
+                err = "Game is ended. No changes allowed."
             else:
-                rid = int(open_round["id"])
-                compute_and_store_round_scores(rid)
-                con.execute(
-                    "UPDATE rounds SET status='closed', closed_at=? WHERE id=?",
-                    (utc_now_iso(), rid),
-                )
-                con.commit()
-                save_standings_snapshot(rid)
-                msg = "Round closed and scored."
+                open_round = get_open_round()
+                if not open_round:
+                    err = "No open round."
+                else:
+                    rid = int(open_round["id"])
+                    compute_and_store_round_scores(rid)
+                    con.execute(
+                        "UPDATE rounds SET status='closed', closed_at=? WHERE id=?",
+                        (utc_now_iso(), rid),
+                    )
+                    con.commit()
+                    save_standings_snapshot(rid)
+                    msg = "Round closed and scored."
+
+        elif action == "end_game":
+            # Close & score any open round, then lock the game.
+            if is_game_ended():
+                msg = "Game is already ended."
+            else:
+                open_round = get_open_round()
+                if open_round:
+                    rid = int(open_round["id"])
+                    compute_and_store_round_scores(rid)
+                    con.execute(
+                        "UPDATE rounds SET status='closed', closed_at=? WHERE id=?",
+                        (utc_now_iso(), rid),
+                    )
+                    con.commit()
+                    save_standings_snapshot(rid)
+                set_game_ended()
+                msg = "Game ended. Submissions are now locked."
+
+        elif action == "resume_game":
+            set_game_running()
+            msg = "Game resumed. Submissions are unlocked."
 
         elif action == "reset_game":
-            # Keep players, wipe game data, unlock difficulty
+            # Keep players, wipe game data, unlock difficulty & status
             con.execute("DELETE FROM guesses")
             con.execute("DELETE FROM standings_history")
             con.execute("DELETE FROM rounds")
             con.execute("UPDATE settings SET value='easy' WHERE key='difficulty'")
+            con.execute("UPDATE settings SET value='running' WHERE key='game_status'")
+            con.execute("UPDATE settings SET value='' WHERE key='ended_at'")
             con.commit()
             msg = "Game reset. Players kept; rounds/guesses cleared."
 
@@ -796,15 +850,16 @@ def admin():
         "SELECT id, name, created_at FROM players ORDER BY name COLLATE NOCASE"
     ).fetchall()
 
-    played = []
+    # initial payload for the "live guesses" panel
+    live_rows = []
     if open_round:
-        played = con.execute(
+        live_rows = con.execute(
             """
-            SELECT p.name AS player, g.updated_at
+            SELECT p.name AS player, g.guess_song, g.guess_artist, g.guess_year, g.updated_at
             FROM guesses g
             JOIN players p ON p.id=g.player_id
             WHERE g.round_id=?
-            ORDER BY p.name COLLATE NOCASE
+            ORDER BY g.updated_at DESC, p.name COLLATE NOCASE ASC
             """,
             (open_round["id"],),
         ).fetchall()
@@ -814,10 +869,12 @@ def admin():
         msg=msg,
         err=err,
         open_round=open_round,
-        played=played,
         players=players,
         difficulty=difficulty,
         locked=locked,
+        status=game_status(),
+        ended_at=ended_at(),
+        live_rows=live_rows,
         player=current_player(),
     )
 
