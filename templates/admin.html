@@ -1,93 +1,205 @@
 {% extends "base.html" %}
 {% block content %}
 
+<style>
+  .admin-grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:16px;
+    align-items:start;
+  }
+  @media (max-width: 900px){
+    .admin-grid{ grid-template-columns: 1fr; }
+  }
+  .pill{
+    display:inline-block;
+    padding:2px 8px;
+    border-radius:999px;
+    font-size:12px;
+    background:rgba(255,255,255,0.08);
+  }
+  .small{ font-size: 12px; }
+  .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+</style>
+
 <div class="card">
   <h2>Admin</h2>
 
   {% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
   {% if err %}<p class="err">{{ err }}</p>{% endif %}
-
-  <h3>Difficulty (locked after first round is created)</h3>
-  <form method="post">
-    <input type="hidden" name="action" value="set_difficulty">
-    <select name="difficulty" {% if locked %}disabled{% endif %}>
-      <option value="easy" {% if difficulty=='easy' %}selected{% endif %}>Easy</option>
-      <option value="hard" {% if difficulty=='hard' %}selected{% endif %}>Hard</option>
-      <option value="extreme" {% if difficulty=='extreme' %}selected{% endif %}>Extreme</option>
-    </select>
-    <button class="btn" type="submit" {% if locked %}disabled{% endif %}>Save</button>
-  </form>
 </div>
 
-<div class="card">
-  <h3>Create & open a new round</h3>
-  <p class="muted">You can only have ONE open round at a time.</p>
-  <form method="post">
-    <input type="hidden" name="action" value="create_round">
-    <label>Question</label>
-    <textarea name="question" rows="2" placeholder='e.g. "Song #3"'></textarea>
-    <button class="btn" type="submit">Create + open</button>
-  </form>
+<div class="admin-grid">
+
+  <!-- LEFT: Round controls -->
+  <div>
+    <div class="card">
+      <h3>Difficulty (locked after first round is created)</h3>
+      <form method="post">
+        <input type="hidden" name="action" value="set_difficulty">
+        <select name="difficulty" {% if locked %}disabled{% endif %}>
+          <option value="easy" {% if difficulty=='easy' %}selected{% endif %}>Easy</option>
+          <option value="hard" {% if difficulty=='hard' %}selected{% endif %}>Hard</option>
+          <option value="extreme" {% if difficulty=='extreme' %}selected{% endif %}>Extreme</option>
+        </select>
+        <button class="btn" type="submit" {% if locked %}disabled{% endif %}>Save</button>
+        {% if locked %}<p class="muted small">Locked after the first round is created.</p>{% endif %}
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Create & open a new round</h3>
+      <p class="muted small">Only one open round at a time.</p>
+      <form method="post">
+        <input type="hidden" name="action" value="create_round">
+        <label>Question</label>
+        <textarea name="question" rows="2" placeholder='e.g. "Song #3"'></textarea>
+        <button class="btn" type="submit">Create + open</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Current open round</h3>
+      {% if open_round %}
+        <p><strong>#{{ open_round.id }}</strong> {{ open_round.question or '' }}</p>
+
+        <form method="post" style="margin-top:10px;">
+          <input type="hidden" name="action" value="set_answers">
+          <label>Correct song</label>
+          <input name="correct_song" value="{{ open_round.correct_song or '' }}">
+          <label>Correct artist</label>
+          <input name="correct_artist" value="{{ open_round.correct_artist or '' }}">
+          <label>Correct year</label>
+          <input name="correct_year" value="{{ open_round.correct_year or '' }}">
+          <button class="btn" type="submit">Update correct answers</button>
+        </form>
+
+        <form method="post" style="margin-top:10px;">
+          <input type="hidden" name="action" value="close_round">
+          <button class="btn secondary" type="submit">Close & score</button>
+        </form>
+      {% else %}
+        <p class="muted">No open round.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- RIGHT: Live submissions/guesses -->
+  <div>
+    <div class="card">
+      <h3>
+        Live submissions
+        <span class="pill" id="liveStatus">waiting…</span>
+      </h3>
+      <p class="muted small">
+        Auto-refreshes every <span class="mono">3s</span>.
+        Last update: <span class="mono" id="lastUpdate">-</span>
+      </p>
+
+      <div class="muted small" id="noOpenRoundNote" style="display:none;">
+        No open round right now.
+      </div>
+
+      <table id="liveTable" style="display:none;">
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th>Song</th>
+            <th>Artist</th>
+            <th>Year</th>
+            <th class="small">Updated</th>
+          </tr>
+        </thead>
+        <tbody id="liveTbody"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Reset game</h3>
+      <form method="post" onsubmit="return confirm('Reset rounds/guesses/history? Players kept.');">
+        <input type="hidden" name="action" value="reset_game">
+        <button class="btn danger" type="submit">Reset</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Players</h3>
+      {% if players and players|length > 0 %}
+        <table>
+          <thead><tr><th>Name</th><th>Created</th></tr></thead>
+          <tbody>
+            {% for p in players %}
+              <tr><td>{{ p.name }}</td><td class="small">{{ p.created_at }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No players yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
 </div>
 
-<div class="card">
-  <h3>Current open round</h3>
-  {% if open_round %}
-    <p><strong>#{{ open_round.id }}</strong> {{ open_round.question or '' }}</p>
+<script>
+  const statusEl = document.getElementById("liveStatus");
+  const lastUpdateEl = document.getElementById("lastUpdate");
+  const noOpenEl = document.getElementById("noOpenRoundNote");
+  const tableEl = document.getElementById("liveTable");
+  const tbodyEl = document.getElementById("liveTbody");
 
-    <form method="post" style="margin-top:10px;">
-      <input type="hidden" name="action" value="set_answers">
-      <label>Correct song</label>
-      <input name="correct_song" value="{{ open_round.correct_song or '' }}">
-      <label>Correct artist</label>
-      <input name="correct_artist" value="{{ open_round.correct_artist or '' }}">
-      <label>Correct year</label>
-      <input name="correct_year" value="{{ open_round.correct_year or '' }}">
-      <button class="btn" type="submit">Update correct answers</button>
-    </form>
+  function esc(s){
+    return String(s ?? "").replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[m]));
+  }
 
-    <form method="post" style="margin-top:10px;">
-      <input type="hidden" name="action" value="close_round">
-      <button class="btn secondary" type="submit">Close & score</button>
-    </form>
+  async function refreshLive(){
+    try{
+      statusEl.textContent = "updating…";
+      const res = await fetch("/api/admin/open_round_guesses", { cache: "no-store" });
+      if(!res.ok){
+        statusEl.textContent = "auth?";
+        return;
+      }
+      const data = await res.json();
 
-    <h4 style="margin-top:14px;">Players who submitted</h4>
-    {% if played and played|length > 0 %}
-      <ul class="list">
-        {% for p in played %}
-          <li>{{ p.player }} <span class="muted">({{ p.updated_at }})</span></li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p class="muted">No submissions yet.</p>
-    {% endif %}
-  {% else %}
-    <p class="muted">No open round.</p>
-  {% endif %}
-</div>
+      lastUpdateEl.textContent = new Date().toLocaleTimeString();
 
-<div class="card">
-  <h3>Reset game</h3>
-  <form method="post" onsubmit="return confirm('Reset rounds/guesses/history? Players kept.');">
-    <input type="hidden" name="action" value="reset_game">
-    <button class="btn danger" type="submit">Reset</button>
-  </form>
-</div>
+      if(!data.has_open_round){
+        noOpenEl.style.display = "";
+        tableEl.style.display = "none";
+        tbodyEl.innerHTML = "";
+        statusEl.textContent = "no open round";
+        return;
+      }
 
-<div class="card">
-  <h3>Players</h3>
-  {% if players and players|length > 0 %}
-    <table>
-      <thead><tr><th>Name</th><th>Created</th></tr></thead>
-      <tbody>
-        {% for p in players %}
-          <tr><td>{{ p.name }}</td><td>{{ p.created_at }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p class="muted">No players yet.</p>
-  {% endif %}
-</div>
+      noOpenEl.style.display = "none";
+      tableEl.style.display = "";
+      statusEl.textContent = `round #${data.round_id}`;
+
+      const rows = data.rows || [];
+      if(rows.length === 0){
+        tbodyEl.innerHTML = `<tr><td colspan="5" class="muted">No submissions yet.</td></tr>`;
+        return;
+      }
+
+      tbodyEl.innerHTML = rows.map(r => `
+        <tr>
+          <td>${esc(r.player)}</td>
+          <td>${esc(r.guess_song)}</td>
+          <td>${esc(r.guess_artist)}</td>
+          <td>${esc(r.guess_year)}</td>
+          <td class="small mono">${esc(r.updated_at)}</td>
+        </tr>
+      `).join("");
+    }catch(e){
+      statusEl.textContent = "error";
+    }
+  }
+
+  refreshLive();
+  setInterval(refreshLive, 3000);
+</script>
 
 {% endblock %}
