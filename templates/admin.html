@@ -36,12 +36,11 @@
 <div class="card">
   <div class="row">
     <h2 style="margin:0;">Admin</h2>
-    <span class="pill" id="gameStatusPill">
-      {% if status == "ended" %}ENDED{% else %}RUNNING{% endif %}
+    <span class="pill" id="gameStatusPill">{% if status == "ended" %}ENDED{% else %}RUNNING{% endif %}</span>
+    <span class="pill" id="autoPill">{% if auto_rounds %}AUTO: ON{% else %}AUTO: OFF{% endif %}</span>
+    <span class="pill mono" id="nextAtPill">
+      {% if next_round_at %}next_round_at: {{ next_round_at }}{% else %}next_round_at: -{% endif %}
     </span>
-    {% if ended_at and status == "ended" %}
-      <span class="pill mono">ended_at: {{ ended_at }}</span>
-    {% endif %}
     <div class="right small muted">
       Difficulty: <strong>{{ difficulty }}</strong>
       {% if locked %} · <span class="pill">locked</span>{% endif %}
@@ -51,7 +50,7 @@
 
 <div class="admin-grid">
 
-  <!-- LEFT: Round controls -->
+  <!-- LEFT: Controls -->
   <div class="card">
     <h3>Game controls</h3>
 
@@ -63,19 +62,35 @@
             End game
           </button>
         </form>
-      {% else %}
-        <form method="post" style="margin:0;">
-          <input type="hidden" name="action" value="resume_game">
-          <button class="btn" type="submit" onclick="return confirm('Resume game? Submissions will be unlocked.');">
-            Resume game
-          </button>
-        </form>
       {% endif %}
 
       <form method="post" style="margin:0;" onsubmit="return confirm('Reset rounds/guesses/history? Players kept.');">
         <input type="hidden" name="action" value="reset_game">
         <button class="btn secondary" type="submit">Reset game</button>
       </form>
+    </div>
+
+    <hr>
+
+    <h3>Auto rounds</h3>
+    <p class="muted small">
+      When ON: rounds are created automatically. After you close a round, the next one opens after <strong>5s</strong>.
+    </p>
+
+    <div class="row">
+      {% if not auto_rounds %}
+        <form method="post" style="margin:0;">
+          <input type="hidden" name="action" value="start_game">
+          <button class="btn" type="submit" {% if status=="ended" %}disabled{% endif %}>
+            Start game (Auto rounds ON)
+          </button>
+        </form>
+      {% else %}
+        <form method="post" style="margin:0;">
+          <input type="hidden" name="action" value="stop_auto">
+          <button class="btn secondary" type="submit">Stop auto rounds</button>
+        </form>
+      {% endif %}
     </div>
 
     <hr>
@@ -96,48 +111,38 @@
 
     <hr>
 
-    <h3>Create & open round</h3>
-    <form method="post">
-      <input type="hidden" name="action" value="create_round">
-      <label>Question</label>
-      <textarea name="question" rows="2" placeholder='e.g. "Song #3"'></textarea>
-      <button class="btn" type="submit" {% if status=="ended" %}disabled{% endif %}>Create + open</button>
-      {% if status=="ended" %}
-        <p class="muted small">Game is ended: resume/reset to open new rounds.</p>
-      {% endif %}
-    </form>
-
-    <hr>
-
     <h3>Open round</h3>
-    {% if open_round %}
-      <p><strong>#{{ open_round.id }}</strong> {{ open_round.question }}</p>
+    <div id="openRoundBox">
+      {% if open_round %}
+        <p><strong>#{{ open_round.id }}</strong> {{ open_round.question }}</p>
 
-      <form method="post" style="margin-top:10px;">
-        <input type="hidden" name="action" value="set_answers">
-        <label>Correct song</label>
-        <input name="correct_song" value="{{ open_round.correct_song or '' }}">
+        <form method="post" style="margin-top:10px;">
+          <input type="hidden" name="action" value="set_answers">
 
-        <label>Correct artist</label>
-        <input name="correct_artist" value="{{ open_round.correct_artist or '' }}">
+          <label>Correct song</label>
+          <input name="correct_song" value="{{ open_round.correct_song or '' }}">
 
-        <label>Correct year</label>
-        <input name="correct_year" value="{{ open_round.correct_year or '' }}">
+          <label>Correct artist</label>
+          <input name="correct_artist" value="{{ open_round.correct_artist or '' }}">
 
-        <button class="btn" type="submit" {% if status=="ended" %}disabled{% endif %}>
-          Update correct answers
-        </button>
-      </form>
+          <label>Correct year</label>
+          <input name="correct_year" value="{{ open_round.correct_year or '' }}">
 
-      <form method="post" style="margin-top:10px;">
-        <input type="hidden" name="action" value="close_round">
-        <button class="btn secondary" type="submit" {% if status=="ended" %}disabled{% endif %}>
-          Close & score
-        </button>
-      </form>
-    {% else %}
-      <p class="muted">No open round.</p>
-    {% endif %}
+          <button class="btn" type="submit" {% if status=="ended" %}disabled{% endif %}>
+            Update correct answers
+          </button>
+        </form>
+
+        <form method="post" style="margin-top:10px;">
+          <input type="hidden" name="action" value="close_round">
+          <button class="btn secondary" type="submit" {% if status=="ended" %}disabled{% endif %}>
+            Close & score
+          </button>
+        </form>
+      {% else %}
+        <p class="muted">No open round.</p>
+      {% endif %}
+    </div>
   </div>
 
   <!-- RIGHT: Live guesses -->
@@ -150,37 +155,33 @@
       </div>
     </div>
 
-    {% if open_round %}
-      <p class="muted small">
-        Round: <strong>#{{ open_round.id }}</strong>
-        · Submitted: <strong id="submittedCount">0</strong>/<strong id="playerCount">{{ players|length }}</strong>
-      </p>
+    <p class="muted small">
+      Round: <strong id="liveRoundId">{% if open_round %}#{{ open_round.id }}{% else %}-{% endif %}</strong>
+      · Submitted: <strong id="submittedCount">0</strong>/<strong id="playerCount">{{ players|length }}</strong>
+    </p>
 
-      <table>
-        <thead>
+    <table>
+      <thead>
+        <tr>
+          <th>Player</th>
+          <th>Song</th>
+          <th>Artist</th>
+          <th>Year</th>
+          <th class="small">Updated</th>
+        </tr>
+      </thead>
+      <tbody id="liveBody">
+        {% for r in live_rows %}
           <tr>
-            <th>Player</th>
-            <th>Song</th>
-            <th>Artist</th>
-            <th>Year</th>
-            <th class="small">Updated</th>
+            <td><strong>{{ r.player }}</strong></td>
+            <td>{{ r.guess_song or '' }}</td>
+            <td>{{ r.guess_artist or '' }}</td>
+            <td>{{ r.guess_year if r.guess_year is not none else '' }}</td>
+            <td class="small mono">{{ r.updated_at }}</td>
           </tr>
-        </thead>
-        <tbody id="liveBody">
-          {% for r in live_rows %}
-            <tr>
-              <td><strong>{{ r.player }}</strong></td>
-              <td>{{ r.guess_song or '' }}</td>
-              <td>{{ r.guess_artist or '' }}</td>
-              <td>{{ r.guess_year if r.guess_year is not none else '' }}</td>
-              <td class="small mono">{{ r.updated_at }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p class="muted">Open a round to see live submissions.</p>
-    {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
 
     <hr>
 
@@ -212,7 +213,12 @@
   const liveUpdated = document.getElementById("liveUpdated");
   const submittedCount = document.getElementById("submittedCount");
   const playerCountEl = document.getElementById("playerCount");
+  const liveRoundId = document.getElementById("liveRoundId");
+
   const gameStatusPill = document.getElementById("gameStatusPill");
+  const autoPill = document.getElementById("autoPill");
+  const nextAtPill = document.getElementById("nextAtPill");
+  const openRoundBox = document.getElementById("openRoundBox");
 
   function esc(s){
     return String(s ?? "").replace(/[&<>"']/g, m => ({
@@ -220,21 +226,42 @@
     }[m]));
   }
 
+  function renderOpenRound(round){
+    if(!openRoundBox) return;
+    if(!round){
+      openRoundBox.innerHTML = `<p class="muted">No open round.</p>`;
+      return;
+    }
+    // We only show basic info here; actions remain via normal form submits.
+    // (When a new round auto-opens, we reload the page to keep forms correct.)
+  }
+
+  let lastRoundId = {{ open_round.id if open_round else "null" }};
+
   async function refreshLive(){
-    {% if open_round %}
     try{
       const res = await fetch("/api/admin/open_round_guesses?ts=" + Date.now(), { cache: "no-store" });
       if(!res.ok){ livePill.textContent = "error"; return; }
       const data = await res.json();
       if(!data.ok){ livePill.textContent = "auth"; return; }
 
-      // update status pill
-      if (data.game_status === "ended") gameStatusPill.textContent = "ENDED";
-      else gameStatusPill.textContent = "RUNNING";
+      // status pills
+      gameStatusPill.textContent = (data.game_status === "ended") ? "ENDED" : "RUNNING";
+      autoPill.textContent = data.auto_rounds ? "AUTO: ON" : "AUTO: OFF";
+      nextAtPill.textContent = "next_round_at: " + (data.next_round_at || "-");
+
+      // round changed? reload to keep the left-side open round forms correct
+      const round = data.round || null;
+      const rid = round ? Number(round.id) : null;
+      if(rid !== lastRoundId){
+        window.location.reload();
+        return;
+      }
+
+      if(liveRoundId) liveRoundId.textContent = round ? ("#" + rid) : "-";
 
       const rows = data.rows || [];
       if (submittedCount) submittedCount.textContent = rows.length;
-      const totalPlayers = Number(playerCountEl ? playerCountEl.textContent : 0);
 
       const html = rows.map(r => `
         <tr>
@@ -252,7 +279,6 @@
     }catch(e){
       livePill.textContent = "offline";
     }
-    {% endif %}
   }
 
   refreshLive();
