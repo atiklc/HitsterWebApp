@@ -624,6 +624,50 @@ def api_last_round():
     }
     return jsonify(payload), 200
 
+@app.get("/api/admin/open_round_guesses")
+def api_admin_open_round_guesses():
+    # Admin-only JSON endpoint for live tracking
+    if not session.get("is_admin"):
+        return jsonify({"ok": False, "error": "unauthorized"}), 403
+
+    con = get_db()
+    open_round = get_open_round()
+    if not open_round:
+        return jsonify({"ok": True, "has_open_round": False, "round_id": None, "rows": []}), 200
+
+    rows = con.execute(
+        """
+        SELECT
+          p.name AS player,
+          g.guess_song,
+          g.guess_artist,
+          g.guess_year,
+          g.updated_at
+        FROM guesses g
+        JOIN players p ON p.id = g.player_id
+        WHERE g.round_id = ?
+        ORDER BY g.updated_at DESC, p.name COLLATE NOCASE ASC
+        """,
+        (open_round["id"],),
+    ).fetchall()
+
+    payload = {
+        "ok": True,
+        "has_open_round": True,
+        "round_id": open_round["id"],
+        "rows": [
+            {
+                "player": r["player"],
+                "guess_song": r["guess_song"] or "",
+                "guess_artist": r["guess_artist"] or "",
+                "guess_year": r["guess_year"] if r["guess_year"] is not None else "",
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ],
+    }
+    return jsonify(payload), 200
+
 
 # =============================
 # Admin (password protected)
