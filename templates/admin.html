@@ -20,6 +20,13 @@
   }
   .small{ font-size: 12px; }
   .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  @keyframes flashRow {
+    0%   { background: rgba(255, 255, 255, 0.22); }
+    100% { background: transparent; }
+  }
+  tr.flash {
+    animation: flashRow 1.2s ease-out 1;
+  }
 </style>
 
 <div class="card">
@@ -147,6 +154,7 @@
   const noOpenEl = document.getElementById("noOpenRoundNote");
   const tableEl = document.getElementById("liveTable");
   const tbodyEl = document.getElementById("liveTbody");
+  const lastSeen = {}; // key -> updated_at
 
   function esc(s){
     return String(s ?? "").replace(/[&<>"']/g, m => ({
@@ -184,15 +192,24 @@
         return;
       }
 
-      tbodyEl.innerHTML = rows.map(r => `
-        <tr>
-          <td>${esc(r.player)}</td>
-          <td>${esc(r.guess_song)}</td>
-          <td>${esc(r.guess_artist)}</td>
-          <td>${esc(r.guess_year)}</td>
-          <td class="small mono">${esc(r.updated_at)}</td>
-        </tr>
-      `).join("");
+      const html = rows.map(r => {
+        const key = (r.player || "").toLowerCase(); // unique enough for party game
+        const isNewOrUpdated = !lastSeen[key] || lastSeen[key] !== r.updated_at;
+        lastSeen[key] = r.updated_at;
+      
+        return `
+          <tr class="${isNewOrUpdated ? "flash" : ""}">
+            <td>${esc(r.player)}</td>
+            <td>${esc(r.guess_song)}</td>
+            <td>${esc(r.guess_artist)}</td>
+            <td>${esc(r.guess_year)}</td>
+            <td class="small mono">${esc(r.updated_at)}</td>
+          </tr>
+        `;
+      }).join("");
+
+      tbodyEl.innerHTML = html;
+
     }catch(e){
       statusEl.textContent = "error";
     }
