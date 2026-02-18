@@ -1,55 +1,104 @@
 {% extends "base.html" %}
 {% block content %}
 
-{% if request.args.get("err") == "enter_one" %}
-  <div class="card">
-    <p class="err">Please enter at least one field (song, artist, or year).</p>
+<style>
+  .game-grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:16px;
+    align-items:start;
+  }
+  @media (max-width: 900px){
+    .game-grid{ grid-template-columns: 1fr; }
+  }
+
+  .delta.up   { color: #30d158; font-weight: 700; }
+  .delta.down { color: #ff453a; font-weight: 700; }
+  .delta.same { color: inherit; opacity: 0.9; }
+
+  .rotate-hint{
+    display:none;
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,0.82);
+    color:#fff;
+    z-index:9999;
+    padding:24px;
+    text-align:center;
+  }
+  .rotate-hint .box{
+    max-width:520px;
+    margin:12vh auto 0;
+    padding:18px;
+    border-radius:14px;
+    background:rgba(255,255,255,0.08);
+  }
+  .rotate-hint .box h3{ margin:0 0 10px 0; }
+  .rotate-hint .box p{ margin:0; opacity:0.95; }
+  .rotate-hint .box button{
+    margin-top:14px;
+    padding:10px 14px;
+    border-radius:10px;
+    border:0;
+    cursor:pointer;
+  }
+</style>
+
+<!-- Optional "force landscape" feel -->
+<div class="rotate-hint" id="rotateHint">
+  <div class="box">
+    <h3>Rotate to landscape</h3>
+    <p>For the best view (Guess + Standings side-by-side), rotate your device.</p>
+    <button onclick="document.getElementById('rotateHint').style.display='none'">Continue anyway</button>
   </div>
-{% endif %}
+</div>
 
-<div class="grid">
+<div class="game-grid">
 
-  <!-- LEFT: Play -->
+  <!-- LEFT: Guess frame -->
   <div class="card">
     <h2>Play</h2>
-    <p class="muted">Difficulty: <strong>{{ difficulty }}</strong></p>
+    <p class="muted">
+      Player: <strong>{{ player.name }}</strong> · Difficulty: <strong>{{ difficulty }}</strong>
+    </p>
+
+    {% if request.args.get("err") == "enter_one" %}
+      <p class="err">Please enter at least one field (song, artist, or year).</p>
+    {% endif %}
 
     {% if open_round %}
-      <p><strong>Round #{{ open_round.id }}</strong></p>
-      <p class="mono">{{ open_round.question }}</p>
-
-      {% if my_guess %}
-        <p class="ok">Submitted ✅ (you can re-submit to update while the round is open)</p>
-      {% else %}
-        <p class="muted">Not submitted yet</p>
-      {% endif %}
+      <h3>Open round</h3>
+      <p><strong>#{{ open_round.id }}</strong> {{ open_round.question or "" }}</p>
 
       <form method="post" action="{{ url_for('submit') }}">
         <label>Song</label>
-        <input name="guess_song" value="{{ my_guess.guess_song if my_guess else '' }}" placeholder="Song title">
+        <input name="guess_song" value="{{ my_guess.guess_song if my_guess else '' }}" placeholder="Your guess">
 
         <label>Artist</label>
-        <input name="guess_artist" value="{{ my_guess.guess_artist if my_guess else '' }}" placeholder="Artist name">
+        <input name="guess_artist" value="{{ my_guess.guess_artist if my_guess else '' }}" placeholder="Your guess">
 
         <label>Year</label>
-        <input name="guess_year" inputmode="numeric" value="{{ my_guess.guess_year if my_guess and my_guess.guess_year is not none else '' }}" placeholder="e.g. 1976">
+        <input name="guess_year" value="{{ my_guess.guess_year if my_guess else '' }}" placeholder="e.g. 1976">
 
-        <div class="spacer"></div>
-        <button class="btn" type="submit">Submit / Update</button>
+        <button class="btn" type="submit">
+          {% if my_guess %}Update guess{% else %}Submit guess{% endif %}
+        </button>
+
+        {% if my_guess %}
+          <p class="muted" style="margin-top:10px;">
+            Submitted ✅ (you can still edit while the round is open)
+          </p>
+        {% endif %}
       </form>
-
-      <p class="tiny muted" style="margin-top:10px;">
-        Page auto-refreshes. If a new round opens, it will appear here.
-      </p>
     {% else %}
-      <p class="muted">No open round right now. Refresh or wait for the admin to open one.</p>
+      <p class="muted">No open round yet. Wait for the admin to start one.</p>
     {% endif %}
   </div>
 
-  <!-- RIGHT: Standings -->
+  <!-- RIGHT: Standings frame -->
   <div class="card">
     <h2>Standings</h2>
-    <table id="standingsTable">
+    <table>
       <thead>
         <tr>
           <th>#</th>
@@ -60,48 +109,57 @@
       </thead>
       <tbody>
         {% for s in standings %}
-          {% set cls = 'same' %}
-          {% if s.delta > 0 %}{% set cls='up' %}{% elif s.delta < 0 %}{% set cls='down' %}{% endif %}
           <tr>
             <td>{{ s.rank }}</td>
             <td>{{ s.player }}</td>
-            <td>{{ s.points }}</td>
-            <td class="delta {{ cls }}">
-              {% if s.delta > 0 %}+{{ s.delta }}{% elif s.delta < 0 %}{{ s.delta }}{% else %}0{% endif %}
+            <td><strong>{{ s.points }}</strong></td>
+            <td>
+              {% if s.delta > 0 %}
+                <span class="delta up">+{{ s.delta }}</span>
+              {% elif s.delta < 0 %}
+                <span class="delta down">{{ s.delta }}</span>
+              {% else %}
+                <span class="delta same">0</span>
+              {% endif %}
             </td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
 
-    <p class="tiny muted" style="margin-top:10px;">Δ compares the last two closed rounds (position change).</p>
+    <p class="muted" style="margin-top:10px;">
+      Refresh this page to update standings.
+    </p>
   </div>
 
 </div>
 
-<!-- Last closed round: correct answer + everyone's answers -->
-<div class="card" id="lastRoundCard">
-  <h2>Last Round Results</h2>
+<!-- BELOW: last round results (optional, full width) -->
+{% if last_closed %}
+  <div class="card" style="margin-top:16px;">
+    <h2>Last round results</h2>
+    <p class="muted">
+      <strong>#{{ last_closed.id }}</strong> {{ last_closed.question or "" }}
+    </p>
 
-  {% if last_closed %}
-    <p><strong>Round #{{ last_closed.id }}</strong> <span class="muted">({{ last_closed.closed_at }})</span></p>
-    <p class="mono">{{ last_closed.question }}</p>
+    {% if correct %}
+      <p>
+        <strong>Correct:</strong>
+        {{ correct.song }} · {{ correct.artist }} · {{ correct.year }}
+      </p>
+    {% endif %}
 
-    <div class="row">
-      <span class="pill">Correct Song: <strong>{{ correct.song }}</strong></span>
-      <span class="pill">Correct Artist: <strong>{{ correct.artist }}</strong></span>
-      <span class="pill">Correct Year: <strong>{{ correct.year }}</strong></span>
-    </div>
-
-    <div class="spacer"></div>
-    <table id="lastResultsTable">
+    <table>
       <thead>
         <tr>
           <th>Player</th>
-          <th>Guess Song</th>
-          <th>Guess Artist</th>
-          <th>Guess Year</th>
-          <th>Pts</th>
+          <th>Song</th>
+          <th>Artist</th>
+          <th>Year</th>
+          <th>Song P</th>
+          <th>Artist P</th>
+          <th>Year P</th>
+          <th>Total</th>
         </tr>
       </thead>
       <tbody>
@@ -111,81 +169,27 @@
             <td>{{ r.guess_song or '' }}</td>
             <td>{{ r.guess_artist or '' }}</td>
             <td>{{ r.guess_year if r.guess_year is not none else '' }}</td>
-            <td>{{ r.total_points }}</td>
+            <td>{{ r.points_song }}</td>
+            <td>{{ r.points_artist }}</td>
+            <td>{{ r.points_year }}</td>
+            <td><strong>{{ r.total_points }}</strong></td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
-  {% else %}
-    <p class="muted">No closed rounds yet.</p>
-  {% endif %}
-</div>
+  </div>
+{% endif %}
 
 <script>
-  // Auto-refresh (no live sockets; just polling)
-  const REFRESH_MS = 5000;
-
-  function deltaClass(d){
-    if (d > 0) return 'up';
-    if (d < 0) return 'down';
-    return 'same';
+  // Optional: show the rotate hint only in portrait, but allow dismiss.
+  const hint = document.getElementById("rotateHint");
+  function updateHint(){
+    const portrait = window.matchMedia && window.matchMedia("(orientation: portrait)").matches;
+    // show hint if portrait (you can set to always block by removing the dismiss button)
+    hint.style.display = portrait ? "block" : "none";
   }
-
-  async function refreshStandings(){
-    try{
-      const res = await fetch("/api/standings", { cache: "no-store" });
-      const rows = await res.json();
-      const tbody = document.querySelector("#standingsTable tbody");
-      if (!tbody) return;
-
-      tbody.innerHTML = rows.map(r => `
-        <tr>
-          <td>${r.rank}</td>
-          <td>${r.player}</td>
-          <td>${r.points}</td>
-          <td class="delta ${deltaClass(r.delta)}">${r.delta>0?("+"+r.delta):r.delta}</td>
-        </tr>
-      `).join("");
-    }catch(e){
-      // silence is golden for polling
-    }
-  }
-
-  async function refreshState(){
-    try{
-      const res = await fetch("/api/state", { cache: "no-store" });
-      const st = await res.json();
-      if (st.needs_register) return;
-      // If open round changes, easiest is to reload the page
-      // (keeps logic simple & reliable)
-      const currentOpen = {{ open_round.id if open_round else 'null' }};
-      const newOpen = st.open_round ? st.open_round.id : null;
-      if (currentOpen !== newOpen){
-        location.reload();
-      }
-    }catch(e){}
-  }
-
-  async function refreshLastRound(){
-    try{
-      const res = await fetch("/api/last_round", { cache: "no-store" });
-      const data = await res.json();
-      if (!data.ok || !data.has_round) return;
-
-      // If you want full DOM patching later, we can do it.
-      // For now, reload if last round id changed.
-      const currentLast = {{ last_closed.id if last_closed else 'null' }};
-      if (currentLast !== data.round.id){
-        location.reload();
-      }
-    }catch(e){}
-  }
-
-  setInterval(() => {
-    refreshState();
-    refreshStandings();
-    refreshLastRound();
-  }, REFRESH_MS);
+  updateHint();
+  window.addEventListener("resize", updateHint);
 </script>
 
 {% endblock %}
