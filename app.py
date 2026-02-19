@@ -863,6 +863,7 @@ def admin():
 
     # useful: if the 5s timer is due, open a round when admin loads page
     auto_open_round_if_due()
+    open_round = get_open_round()
 
     open_round = get_open_round()
     players = con.execute(
@@ -887,17 +888,14 @@ def admin():
         msg=msg,
         err=err,
         open_round=open_round,
+        current_round=open_round,   # <— compatibility for older templates
+        played=played,
         players=players,
-        live_rows=live_rows,
-        difficulty=get_setting("difficulty", "easy"),
-        locked=difficulty_locked(),
-        status=game_status(),
-        ended_at=ended_at(),
-        auto_rounds=auto_rounds_enabled(),
-        next_round_at=next_round_at_iso(),
-        question_prefix=get_setting("question_prefix", "Song #"),
+        difficulty=difficulty,
+        locked=locked,
         player=current_player(),
     )
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
