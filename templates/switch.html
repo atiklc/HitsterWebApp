@@ -1,23 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-  <h2>Switch player on this device</h2>
-  <p class="muted">This does not affect other devices. Each device keeps its own session.</p>
-
-  {% if players and players|length > 0 %}
-    <form method="post">
-      <label>Select existing player</label>
-      <select name="player_id">
-        {% for p in players %}
-          <option value="{{ p.id }}">{{ p.name }}</option>
-        {% endfor %}
-      </select>
-
-      <div class="spacer"></div>
-      <button class="btn" type="submit">Use this player</button>
-    </form>
-  {% else %}
-    <p class="muted">No players yet. Go to <a href="{{ url_for('register') }}">Register</a>.</p>
-  {% endif %}
+  <h2>Switch player</h2>
+  <form method="post">
+    <label>Choose player</label>
+    <select name="player_id">
+      {% for p in players %}
+        <option value="{{ p.id }}">{{ p.name }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit" style="margin-top:10px;">Switch</button>
+  </form>
 </div>
 {% endblock %}
