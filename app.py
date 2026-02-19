@@ -18,7 +18,7 @@ DB_PATH = os.environ.get("DB_PATH") or os.path.join(APP_DIR, "hitster.db")
 app = Flask(__name__, template_folder="templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")  # set on Render
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "09874563210")  # set on Render
 
 # ------------------------------------------------------------
 # Time helpers
