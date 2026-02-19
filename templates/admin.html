@@ -1,90 +1,56 @@
 {% extends "base.html" %}
 {% block content %}
 
+{% set r = open_round or current_round %}
+
 <div class="card">
   <h2>Admin</h2>
   {% if msg %}<p class="ok">{{ msg }}</p>{% endif %}
   {% if err %}<p class="err">{{ err }}</p>{% endif %}
-
-  <div class="muted">
-    Status: <span class="pill">{{ status }}</span>
-    {% if status == "ended" %}Ended at: <span class="pill">{{ ended_at }}</span>{% endif %}
-    Auto rounds: <span class="pill">{{ "ON" if auto_rounds else "OFF" }}</span>
-    {% if next_round_at %}Next round at: <span class="pill">{{ next_round_at }}</span>{% endif %}
-  </div>
 </div>
 
-<div class="grid" style="grid-template-columns:1fr; gap:14px;" id="adminGrid">
+<div class="grid" id="adminGrid" style="grid-template-columns:1fr; gap:14px;">
 
-  <!-- Left: controls -->
+  <!-- LEFT: Round control -->
   <div class="card">
-    <h3>Game control</h3>
+    <h3>Round</h3>
 
-    <div class="row" style="margin-top:8px;">
-      <form method="post">
-        <input type="hidden" name="action" value="start_game">
-        <button class="btn" type="submit">Start game (auto rounds)</button>
-      </form>
-
-      <form method="post">
-        <input type="hidden" name="action" value="stop_auto">
-        <button class="btn secondary" type="submit">Stop auto</button>
-      </form>
-
-      <form method="post" onsubmit="return confirm('End game? This locks submissions.');">
-        <input type="hidden" name="action" value="end_game">
-        <button class="btn danger" type="submit">End game</button>
-      </form>
-    </div>
-
-    <hr style="border:0; border-top:1px solid var(--line); margin:14px 0;">
-
-    <h3>Difficulty (only before first round)</h3>
-    <form method="post">
-      <input type="hidden" name="action" value="set_difficulty">
-      <select name="difficulty" {% if locked %}disabled{% endif %}>
-        <option value="easy" {% if difficulty=='easy' %}selected{% endif %}>Easy</option>
-        <option value="hard" {% if difficulty=='hard' %}selected{% endif %}>Hard</option>
-        <option value="extreme" {% if difficulty=='extreme' %}selected{% endif %}>Extreme</option>
-      </select>
-      <div class="row" style="margin-top:10px;">
-        <button class="btn" type="submit" {% if locked %}disabled{% endif %}>Save</button>
-        {% if locked %}<span class="muted">Locked after first round.</span>{% endif %}
-      </div>
-    </form>
-
-    <label>Auto question prefix</label>
-    <form method="post">
-      <input type="hidden" name="action" value="set_prefix">
-      <input name="question_prefix" value="{{ question_prefix }}">
-      <button class="btn" type="submit" style="margin-top:10px;">Save prefix</button>
-    </form>
-
-    <hr style="border:0; border-top:1px solid var(--line); margin:14px 0;">
-
-    <h3>Open round</h3>
-    {% if open_round %}
-      <p class="muted">#{{ open_round.id }}</p>
-      <p style="font-size:1.05rem;">{{ open_round.question }}</p>
+    {% if r %}
+      <p class="muted">Open round: <strong>#{{ r.id }}</strong></p>
+      <p style="font-size:1.05rem;">{{ r.question or "" }}</p>
 
       <form method="post" style="margin-top:10px;">
         <input type="hidden" name="action" value="set_answers">
+
         <label>Correct song</label>
-        <input name="correct_song" value="{{ open_round.correct_song or '' }}">
+        <input type="text" name="correct_song" value="{{ r.correct_song or '' }}">
+
         <label>Correct artist</label>
-        <input name="correct_artist" value="{{ open_round.correct_artist or '' }}">
+        <input type="text" name="correct_artist" value="{{ r.correct_artist or '' }}">
+
         <label>Correct year</label>
-        <input name="correct_year" value="{{ open_round.correct_year or '' }}" inputmode="numeric">
+        <input type="text" name="correct_year" value="{{ r.correct_year or '' }}" inputmode="numeric">
+
         <button class="btn" type="submit" style="margin-top:10px;">Update correct answers</button>
       </form>
 
       <form method="post" style="margin-top:10px;" onsubmit="return confirm('Close this round and score it?');">
         <input type="hidden" name="action" value="close_round">
-        <button class="btn secondary" type="submit">Close & score (next round in 5s)</button>
+        <button class="btn secondary" type="submit">Close & score</button>
       </form>
     {% else %}
-      <p class="muted">No open round.</p>
+      <p class="muted">No active rounds (this will auto-update).</p>
     {% endif %}
+
+    <hr style="border:0; border-top:1px solid var(--line); margin:14px 0;">
+
+    <h3>Create round (manual)</h3>
+    <form method="post">
+      <input type="hidden" name="action" value="create_round">
+      <label>Question</label>
+      <textarea name="question" rows="2" placeholder='e.g. "Song #3"'></textarea>
+      <button class="btn" type="submit" style="margin-top:10px;">Create + open</button>
+    </form>
 
     <hr style="border:0; border-top:1px solid var(--line); margin:14px 0;">
 
@@ -95,12 +61,11 @@
     </form>
   </div>
 
-  <!-- Right: live guesses -->
+  <!-- RIGHT: Live guesses -->
   <div class="card">
     <h3>Live submissions</h3>
     <div class="muted" id="liveMeta">Auto refresh every 4s</div>
-
-    <div id="liveRound" class="muted" style="margin-top:8px;"></div>
+    <div class="muted" id="liveRound" style="margin-top:8px;"></div>
 
     <table style="margin-top:10px;">
       <thead>
@@ -112,23 +77,14 @@
           <th style="width:160px;">Updated</th>
         </tr>
       </thead>
-      <tbody id="liveBody">
-        {% for r in live_rows %}
-          <tr>
-            <td>{{ r.player }}</td>
-            <td>{{ r.guess_song or '' }}</td>
-            <td>{{ r.guess_artist or '' }}</td>
-            <td>{{ r.guess_year if r.guess_year is not none else '' }}</td>
-            <td class="muted">{{ r.updated_at }}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
+      <tbody id="liveBody"></tbody>
     </table>
   </div>
 
 </div>
 
 <script>
+  // 2 columns on wide screens
   const mq = window.matchMedia("(min-width: 1000px)");
   function applyColumns() {
     const grid = document.getElementById("adminGrid");
@@ -138,50 +94,61 @@
   mq.addEventListener("change", applyColumns);
   applyColumns();
 
-  // refresh NOT faster than 3s
-  const LIVE_MS = 4000;
-  let lastRoundId = {{ open_round.id if open_round else "null" }};
+  const LIVE_MS = 4000; // >= 3 seconds
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({
+  function esc(s){
+    return String(s ?? "").replace(/[&<>"']/g, c => ({
       "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
     }[c]));
   }
 
   async function refreshLive() {
     try {
-      const r = await fetch("/api/admin/open_round_guesses?ts=" + Date.now(), { cache: "no-store" });
-      const data = await r.json();
-      if (!data || !data.ok) return;
+      const res = await fetch("/api/admin/open_round_guesses?ts=" + Date.now(), {
+        cache: "no-store",
+        credentials: "same-origin"
+      });
 
-      const liveRound = document.getElementById("liveRound");
-      const tbody = document.getElementById("liveBody");
-      if (!tbody) return;
-
-      if (!data.has_open_round) {
-        if (liveRound) liveRound.textContent = "No open round.";
-        tbody.innerHTML = "";
-        lastRoundId = null;
+      if (res.status === 403) {
+        window.location.href = "/admin/login";
         return;
       }
 
-      const rid = data.round.id;
-      if (liveRound) liveRound.textContent = `Round #${rid}: ${data.round.question} (submissions: ${data.rows.length})`;
+      const data = await res.json();
+      if (!data || !data.ok) return;
 
-      // If round id changed, just rebuild list
-      lastRoundId = rid;
+      // Your endpoint might return either:
+      //  A) {has_open_round:true, round:{id,question}, rows:[...]}
+      //  B) {has_open_round:true, round_id:..., rows:[...]}
+      const has = !!data.has_open_round;
+      const roundObj = data.round || (data.round_id ? { id: data.round_id, question: data.question || "" } : null);
 
-      tbody.innerHTML = "";
-      for (const row of data.rows) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${escapeHtml(row.player)}</td>
-          <td>${escapeHtml(row.guess_song || "")}</td>
-          <td>${escapeHtml(row.guess_artist || "")}</td>
-          <td>${escapeHtml(row.guess_year || "")}</td>
-          <td class="muted">${escapeHtml(row.updated_at || "")}</td>
-        `;
-        tbody.appendChild(tr);
+      const liveRound = document.getElementById("liveRound");
+      const tbody = document.getElementById("liveBody");
+
+      if (!has || !roundObj) {
+        if (liveRound) liveRound.textContent = "No open round.";
+        if (tbody) tbody.innerHTML = "";
+        return;
+      }
+
+      if (liveRound) {
+        liveRound.textContent = `Round #${roundObj.id}: ${roundObj.question || ""} (submissions: ${(data.rows||[]).length})`;
+      }
+
+      if (tbody) {
+        tbody.innerHTML = "";
+        for (const row of (data.rows || [])) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${esc(row.player)}</td>
+            <td>${esc(row.guess_song)}</td>
+            <td>${esc(row.guess_artist)}</td>
+            <td>${esc(row.guess_year)}</td>
+            <td class="muted">${esc(row.updated_at)}</td>
+          `;
+          tbody.appendChild(tr);
+        }
       }
     } catch(e) {}
   }
