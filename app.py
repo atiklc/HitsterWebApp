@@ -6,8 +6,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 
 from flask import (
-    Flask, render_template, request, redirect, url_for,
-    session, jsonify, g, response
+    Flask, Response, render_template, request, redirect, url_for,
+    session, jsonify, g
 )
 
 # ------------------------------------------------------------
@@ -672,70 +672,46 @@ def api_standings():
 
 @app.get("/api/admin/open_round_guesses")
 def api_admin_open_round_guesses():
-    # Return 403 (not redirect) so admin page JS can detect and send user to /admin/login
     if not session.get("is_admin"):
-        return json_utf8({"ok": False, "error": "admin_required"}, 403)
-
-    # Make sure admin calls also "tick" auto-round scheduling
-    try:
-        auto_open_round_if_due()
-    except Exception:
-        # Don't break the UI if timer logic hiccups
-        pass
+        return jsonify({"ok": False, "error": "forbidden"}), 403
 
     open_round = get_open_round()
 
-    # Pull game meta (use your existing getters/fields if named differently)
-    game_status = get_setting("game_status", "stopped")
-    ended_at = get_setting("ended_at", "")
-    auto_rounds = (get_setting("auto_rounds", "false") == "true")
-    next_round_at = get_setting("next_round_at", "")
-
     payload = {
         "ok": True,
-        "game_status": game_status,
-        "ended_at": ended_at,
-        "auto_rounds": auto_rounds,
-        "next_round_at": next_round_at,
+        "game_status": game_status(),
+        "ended_at": ended_at(),
+        "auto_rounds": auto_rounds_enabled(),
+        "next_round_at": next_round_at_iso(),
         "has_open_round": bool(open_round),
-        "round": None,          # always present
-        "rows": [],             # always present
-        "submitted_count": 0,
-        "player_count": 0,
-        "server_time": utc_now_iso(),
+        "round": None,
+        "rows": [],
     }
 
-    # Total player count (nice for admin tracking)
-    with db_connect() as con:
-        payload["player_count"] = int(
-            con.execute("SELECT COUNT(*) AS c FROM players").fetchone()["c"]
-        )
+    con = get_db()
+
+    # handy meta info
+    payload["player_count"] = int(
+        con.execute("SELECT COUNT(*) AS c FROM players").fetchone()["c"]
+    )
 
     if not open_round:
-        return json_utf8(payload, 200)
+        return jsonify(payload), 200
 
-    payload["round"] = {
-        "id": int(open_round["id"]),
-        "question": open_round["question"] or "",
-        "correct_song": open_round["correct_song"] or "",
-        "correct_artist": open_round["correct_artist"] or "",
-        "correct_year": open_round["correct_year"] if open_round["correct_year"] is not None else "",
-        "created_at": open_round["created_at"] or "",
-    }
+    payload["round"] = {"id": int(open_round["id"]), "question": open_round["question"] or ""}
 
-    with db_connect() as con:
-        rows = con.execute(
-            """
-            SELECT p.name AS player,
-                   g.guess_song, g.guess_artist, g.guess_year,
-                   g.updated_at
-            FROM guesses g
-            JOIN players p ON p.id = g.player_id
-            WHERE g.round_id=?
-            ORDER BY g.updated_at DESC
-            """,
-            (open_round["id"],),
-        ).fetchall()
+    rows = con.execute(
+        """
+        SELECT p.name AS player,
+               g.guess_song, g.guess_artist, g.guess_year,
+               g.updated_at
+        FROM guesses g
+        JOIN players p ON p.id = g.player_id
+        WHERE g.round_id=?
+        ORDER BY g.updated_at DESC
+        """,
+        (open_round["id"],),
+    ).fetchall()
 
     payload["rows"] = [
         {
@@ -743,13 +719,12 @@ def api_admin_open_round_guesses():
             "guess_song": r["guess_song"] or "",
             "guess_artist": r["guess_artist"] or "",
             "guess_year": r["guess_year"] if r["guess_year"] is not None else "",
-            "updated_at": r["updated_at"] or "",
+            "updated_at": r["updated_at"],
         }
         for r in rows
     ]
-    payload["submitted_count"] = len(payload["rows"])
 
-    return json_utf8(payload, 200)
+    return jsonify(payload), 200
 
 # ------------------------------------------------------------
 # Admin pages
@@ -934,14 +909,19 @@ def admin():
         msg=msg,
         err=err,
         open_round=open_round,
-        current_round=open_round,   # <— compatibility for older templates
-        played=played,
+        current_round=open_round,  # template compatibility
         players=players,
-        difficulty=difficulty,
-        locked=locked,
+        live_rows=live_rows,
+        difficulty=get_setting("difficulty", "easy"),
+        locked=difficulty_locked(),
+        status=game_status(),
+        ended_at=ended_at(),
+        auto_rounds=auto_rounds_enabled(),
+        next_round_at=next_round_at_iso(),
+        question_prefix=get_setting("question_prefix", "Song #"),
+        auto_delay=5,
         player=current_player(),
     )
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
