@@ -5,47 +5,68 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>{{ title or "Hitster" }}</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:#0b0f16;color:#e8eefc}
-    a{color:#9cc2ff;text-decoration:none}
-    .topbar{display:flex;gap:14px;align-items:center;padding:12px 16px;background:#0f1725;border-bottom:1px solid #22304a}
-    .spacer{flex:1}
-    .container{max-width:980px;margin:0 auto;padding:16px}
-    .card{background:#121c2e;border:1px solid #22304a;border-radius:14px;padding:14px;margin-bottom:12px}
-    .btn{background:#2b6cff;border:none;color:white;padding:10px 12px;border-radius:10px;cursor:pointer}
-    .btn.secondary{background:#24314a}
-    .btn.danger{background:#a83232}
-    input,select,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #22304a;background:#0f1725;color:#e8eefc;box-sizing:border-box}
-    label{display:block;margin:10px 0 6px 0;color:#b8c6e6}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:8px;border-bottom:1px solid #22304a;text-align:left}
-    .muted{color:#a9b7d6}
-    .err{color:#ff9aa2}
-    .ok{color:#8dffb2}
+    :root { --bg:#0b0b0c; --card:#141416; --txt:#f2f2f2; --muted:#a8a8a8; --line:#2a2a2f;
+            --ok:#2ecc71; --bad:#ff5c5c; --warn:#ffcc66; }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; background:var(--bg); color:var(--txt); }
+    a{ color:inherit; text-decoration:none; }
+    .topbar{ position:sticky; top:0; z-index:10; background:#0f0f11; border-bottom:1px solid var(--line); }
+    .topbar-inner{ max-width:1200px; margin:0 auto; padding:12px 14px; display:flex; gap:14px; align-items:center; justify-content:space-between; }
+    .brand{ font-weight:700; letter-spacing:.2px; }
+    .nav{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .nav a, .nav button{ padding:8px 10px; border:1px solid var(--line); border-radius:10px; background:transparent; color:var(--txt); cursor:pointer; }
+    .nav a:hover, .nav button:hover{ border-color:#3a3a44; }
+    .container{ max-width:1200px; margin:0 auto; padding:14px; }
+    .grid{ display:grid; gap:14px; }
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; }
+    h1,h2,h3{ margin:0 0 10px; }
+    label{ display:block; margin:10px 0 6px; color:var(--muted); font-size:.92rem; }
+    input, textarea, select{ width:100%; padding:10px; border-radius:12px; border:1px solid var(--line); background:#0f0f12; color:var(--txt); }
+    textarea{ resize:vertical; }
+    .btn{ padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:#1d1d22; color:var(--txt); cursor:pointer; }
+    .btn:hover{ border-color:#3a3a44; }
+    .btn.secondary{ background:transparent; }
+    .btn.danger{ background:#2a1212; border-color:#4a1f1f; }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .muted{ color:var(--muted); }
+    .ok{ color:var(--ok); }
+    .err{ color:var(--bad); }
+    table{ width:100%; border-collapse:collapse; }
+    th, td{ text-align:left; padding:10px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th{ color:var(--muted); font-weight:600; }
+    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); font-size:.85rem; }
+    .delta-up{ color:var(--ok); font-weight:700; }
+    .delta-down{ color:var(--bad); font-weight:700; }
+    .delta-same{ color:var(--txt); opacity:.85; }
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <strong>🎵 Hitster</strong>
-    <a href="{{ url_for('register') }}">Register</a>
-    <a href="{{ url_for('game') }}">Game</a>
-    <a href="{{ url_for('switch') }}">Switch player</a>
-    <div class="spacer"></div>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand"><a href="{{ url_for('game') }}">Hitster</a></div>
+      <nav class="nav">
+        {% if session.get("player_id") %}
+          <a href="{{ url_for('game') }}">Game</a>
+          <a href="{{ url_for('switch') }}">Switch</a>
+          <a href="{{ url_for('logout') }}">Logout</a>
+        {% else %}
+          <a href="{{ url_for('register') }}">Register</a>
+        {% endif %}
 
-    {% if session.get("is_admin") %}
-      <a href="{{ url_for('admin') }}">Admin</a>
-      <form method="post" action="{{ url_for('admin_logout') }}" style="margin:0">
-        <button class="btn secondary" type="submit">Logout</button>
-      </form>
-    {% else %}
-      <a href="{{ url_for('admin_login_get') }}">Admin login</a>
-    {% endif %}
-  </div>
+        {% if session.get("is_admin") %}
+          <a href="{{ url_for('admin') }}">Admin</a>
+          <form method="post" action="{{ url_for('admin_logout') }}" style="display:inline;">
+            <button type="submit">Admin logout</button>
+          </form>
+        {% else %}
+          <a href="{{ url_for('admin_login') }}">Admin</a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
 
-  <div class="container">
+  <main class="container">
     {% block content %}{% endblock %}
-    {% if content_override %}
-      {{ content_override|safe }}
-    {% endif %}
-  </div>
+  </main>
 </body>
 </html>
