@@ -2,44 +2,34 @@ import os
 import re
 import sqlite3
 from datetime import datetime, timezone, timedelta
+from typing import Optional, Dict, Any, List
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
     session, jsonify, g
 )
 
-# =============================
-# Config
-# =============================
+# ------------------------------------------------------------
+# App config
+# ------------------------------------------------------------
 APP_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.environ.get("DB_PATH") or os.path.join(APP_DIR, "hitster.db")
 
 app = Flask(__name__, template_folder="templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "09874563210")  # set on Render!
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")  # set on Render
 
-
-# =============================
-# Utilities
-# =============================
+# ------------------------------------------------------------
+# Time helpers
+# ------------------------------------------------------------
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
 
 def utc_now_iso() -> str:
     return utc_now().replace(microsecond=0).isoformat()
 
-
-def normalize_text(s: str | None) -> str:
-    if not s:
-        return ""
-    s = str(s).strip()
-    s = re.sub(r"\s+", " ", s)
-    return s.casefold()
-
-
-def parse_iso_dt(s: str) -> datetime | None:
+def parse_iso_dt(s: str) -> Optional[datetime]:
     if not s:
         return None
     try:
@@ -50,10 +40,20 @@ def parse_iso_dt(s: str) -> datetime | None:
     except Exception:
         return None
 
+# ------------------------------------------------------------
+# Text helpers
+# ------------------------------------------------------------
+_ws_re = re.compile(r"\s+")
+def normalize_text(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    s = str(s).strip()
+    s = _ws_re.sub(" ", s)
+    return s.casefold()
 
-# =============================
+# ------------------------------------------------------------
 # DB helpers
-# =============================
+# ------------------------------------------------------------
 def get_db() -> sqlite3.Connection:
     if "db" not in g:
         con = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
@@ -64,13 +64,11 @@ def get_db() -> sqlite3.Connection:
         g.db = con
     return g.db
 
-
 @app.teardown_appcontext
 def close_db(_exc):
     con = g.pop("db", None)
     if con is not None:
         con.close()
-
 
 def init_db() -> None:
     con = get_db()
@@ -130,29 +128,22 @@ def init_db() -> None:
         """
     )
 
-    # Defaults
+    # defaults
     con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('difficulty','easy')")
     con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('game_status','running')")  # running|ended
     con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('ended_at','')")
-
-    # Auto-rounds
-    con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_rounds','0')")        # 0|1
-    con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('next_round_at','')")      # ISO UTC
+    con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('auto_rounds','0')")       # 0|1
+    con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('next_round_at','')")     # ISO UTC
     con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('question_prefix','Song #')")
-
     con.commit()
 
-
 @app.before_request
-def _ensure_db_once_per_request():
+def _ensure_db():
     init_db()
 
-
-# =============================
-# Caching protection (IMPORTANT)
-# =============================
 @app.after_request
 def no_cache(resp):
+    # critical: avoids “everyone sees same player” effects via caching/proxies
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
@@ -160,14 +151,12 @@ def no_cache(resp):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     return resp
 
-
-# =============================
-# Settings / state
-# =============================
+# ------------------------------------------------------------
+# Settings helpers
+# ------------------------------------------------------------
 def get_setting(key: str, default: str = "") -> str:
     row = get_db().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
     return row["value"] if row else default
-
 
 def set_setting(key: str, value: str) -> None:
     con = get_db()
@@ -178,126 +167,103 @@ def set_setting(key: str, value: str) -> None:
     )
     con.commit()
 
-
 def game_status() -> str:
-    s = get_setting("game_status", "running").strip().lower()
+    s = (get_setting("game_status", "running") or "running").strip().lower()
     return s if s in ("running", "ended") else "running"
-
 
 def ended_at() -> str:
     return get_setting("ended_at", "")
 
-
 def is_game_ended() -> bool:
     return game_status() == "ended"
-
 
 def set_game_ended():
     set_setting("game_status", "ended")
     set_setting("ended_at", utc_now_iso())
-    # stop auto rounds when ended
     set_setting("auto_rounds", "0")
     set_setting("next_round_at", "")
-
 
 def set_game_running():
     set_setting("game_status", "running")
     set_setting("ended_at", "")
 
-
 def auto_rounds_enabled() -> bool:
     return get_setting("auto_rounds", "0") == "1"
 
-
 def next_round_at_iso() -> str:
     return get_setting("next_round_at", "")
-
 
 def set_next_round_in_seconds(seconds: int):
     dt = utc_now() + timedelta(seconds=seconds)
     set_setting("next_round_at", dt.replace(microsecond=0).isoformat())
 
-
 def clear_next_round():
     set_setting("next_round_at", "")
-
 
 def difficulty_locked() -> bool:
     row = get_db().execute("SELECT COUNT(*) AS c FROM rounds").fetchone()
     return int(row["c"]) > 0
 
-
+# ------------------------------------------------------------
+# Game helpers
+# ------------------------------------------------------------
 def current_player():
     pid = session.get("player_id")
     if not pid:
         return None
     return get_db().execute("SELECT * FROM players WHERE id=?", (pid,)).fetchone()
 
-
 def _make_auto_question(con: sqlite3.Connection) -> str:
-    prefix = get_setting("question_prefix", "Song #")
+    prefix = (get_setting("question_prefix", "Song #") or "Song #").strip()
     count = int(con.execute("SELECT COUNT(*) AS c FROM rounds").fetchone()["c"])
     n = count + 1
-
-    # nice formatting: "Song #3" by default
-    p = prefix.strip()
-    if p.endswith("#"):
-        return f"{p}{n}"
-    if p.endswith("# "):
-        return f"{p}{n}"
-    if p.endswith(" "):
-        return f"{p}{n}"
-    return f"{p} {n}"
-
+    if prefix.endswith("#"):
+        return f"{prefix}{n}"
+    if prefix.endswith("# "):
+        return f"{prefix}{n}"
+    if prefix.endswith(" "):
+        return f"{prefix}{n}"
+    return f"{prefix} {n}"
 
 def auto_open_round_if_due() -> None:
     """
-    If auto rounds is enabled and there's no open round and next_round_at is due,
-    create a new round. Uses BEGIN IMMEDIATE to avoid duplicates under concurrency.
+    Create a new open round ONLY when:
+      - game is running
+      - auto_rounds enabled
+      - no open round exists
+      - next_round_at is set and is due
     """
-    if is_game_ended():
-        return
-    if not auto_rounds_enabled():
+    if is_game_ended() or not auto_rounds_enabled():
         return
 
-    due_iso = next_round_at_iso()
-    due_dt = parse_iso_dt(due_iso)
+    due_dt = parse_iso_dt(next_round_at_iso())
     if not due_dt:
         return
-
     if utc_now() < due_dt:
         return
 
     con = get_db()
     try:
         con.execute("BEGIN IMMEDIATE")
-        # re-check no open round
-        already = con.execute("SELECT 1 FROM rounds WHERE status='open' LIMIT 1").fetchone()
-        if already:
+
+        # re-check inside lock
+        if con.execute("SELECT 1 FROM rounds WHERE status='open' LIMIT 1").fetchone():
+            con.execute("COMMIT")
+            return
+        if (get_setting("game_status", "running") != "running") or (get_setting("auto_rounds", "0") != "1"):
             con.execute("COMMIT")
             return
 
-        # re-check still due & enabled & running
-        if get_setting("game_status", "running") != "running":
-            con.execute("COMMIT")
-            return
-        if get_setting("auto_rounds", "0") != "1":
+        due_dt2 = parse_iso_dt(get_setting("next_round_at", ""))
+        if (not due_dt2) or (utc_now() < due_dt2):
             con.execute("COMMIT")
             return
 
-        # due again
-        due_iso2 = get_setting("next_round_at", "")
-        due_dt2 = parse_iso_dt(due_iso2)
-        if not due_dt2 or utc_now() < due_dt2:
-            con.execute("COMMIT")
-            return
-
-        question = _make_auto_question(con)
+        q = _make_auto_question(con)
         con.execute(
             "INSERT INTO rounds(question,status,created_at) VALUES(?, 'open', ?)",
-            (question, utc_now_iso()),
+            (q, utc_now_iso()),
         )
-        # clear so it won't keep creating
         con.execute("UPDATE settings SET value='' WHERE key='next_round_at'")
         con.execute("COMMIT")
     except Exception:
@@ -305,7 +271,6 @@ def auto_open_round_if_due() -> None:
             con.execute("ROLLBACK")
         except Exception:
             pass
-
 
 def get_open_round():
     con = get_db()
@@ -319,16 +284,14 @@ def get_open_round():
         ).fetchone()
     return row
 
-
 def get_last_closed_round():
     return get_db().execute(
         "SELECT * FROM rounds WHERE status='closed' ORDER BY id DESC LIMIT 1"
     ).fetchone()
 
-
-# =============================
+# ------------------------------------------------------------
 # Scoring
-# =============================
+# ------------------------------------------------------------
 def score_year(diff: int, difficulty: str) -> int:
     if difficulty == "easy":
         if diff == 0: return 5
@@ -353,12 +316,10 @@ def score_year(diff: int, difficulty: str) -> int:
 
     return 0
 
-
-def score_song_artist(guess: str | None, correct: str | None) -> int:
+def score_song_artist(guess: Optional[str], correct: Optional[str]) -> int:
     if not correct:
         return 0
     return 5 if normalize_text(guess) == normalize_text(correct) else 0
-
 
 def compute_and_store_round_scores(round_id: int) -> None:
     con = get_db()
@@ -373,7 +334,6 @@ def compute_and_store_round_scores(round_id: int) -> None:
     ca = rnd["correct_artist"] or ""
 
     guesses = con.execute("SELECT * FROM guesses WHERE round_id=?", (round_id,)).fetchall()
-
     for g0 in guesses:
         py = 0
         if cy is not None and g0["guess_year"] is not None:
@@ -394,11 +354,9 @@ def compute_and_store_round_scores(round_id: int) -> None:
             """,
             (py, ps, pa, total, utc_now_iso(), g0["id"]),
         )
-
     con.commit()
 
-
-def compute_standings():
+def compute_standings() -> List[Dict[str, Any]]:
     con = get_db()
     rows = con.execute(
         """
@@ -410,12 +368,7 @@ def compute_standings():
         ORDER BY points DESC, p.name COLLATE NOCASE ASC
         """
     ).fetchall()
-
-    return [
-        {"player_id": r["player_id"], "player": r["player"], "points": int(r["points"])}
-        for r in rows
-    ]
-
+    return [{"player_id": r["player_id"], "player": r["player"], "points": int(r["points"])} for r in rows]
 
 def save_standings_snapshot(closed_round_id: int) -> None:
     con = get_db()
@@ -432,8 +385,7 @@ def save_standings_snapshot(closed_round_id: int) -> None:
         )
     con.commit()
 
-
-def get_rank_delta_for_latest():
+def get_rank_delta_for_latest() -> Dict[int, int]:
     con = get_db()
     last = con.execute(
         "SELECT id FROM rounds WHERE status='closed' ORDER BY id DESC LIMIT 1"
@@ -467,42 +419,36 @@ def get_rank_delta_for_latest():
         delta[pid] = int(pr) - int(lr)  # positive => moved up
     return delta
 
-
-# =============================
+# ------------------------------------------------------------
 # Admin auth
-# =============================
+# ------------------------------------------------------------
 def require_admin():
     if not session.get("is_admin"):
-        return redirect(url_for("admin_login_get"))
+        return redirect(url_for("admin_login"))
     return None
 
-
-# =============================
-# Routes (public)
-# =============================
+# ------------------------------------------------------------
+# Routes
+# ------------------------------------------------------------
 @app.get("/")
 def home():
     if session.get("player_id"):
         return redirect(url_for("game"))
     return redirect(url_for("register"))
 
-
 @app.route("/register", methods=["GET", "POST"])
 def register():
     error = None
-
     if request.method == "POST":
         name = (request.form.get("player_name") or "").strip()
-
         if not name:
             error = "Player name is required."
         else:
             con = get_db()
             row = con.execute(
-                "SELECT id, name FROM players WHERE name=? COLLATE NOCASE",
+                "SELECT id FROM players WHERE name=? COLLATE NOCASE",
                 (name,),
             ).fetchone()
-
             if row:
                 pid = int(row["id"])
             else:
@@ -519,7 +465,6 @@ def register():
 
     return render_template("register.html", error=error, player=current_player())
 
-
 @app.get("/switch")
 def switch():
     players = get_db().execute(
@@ -527,27 +472,22 @@ def switch():
     ).fetchall()
     return render_template("switch.html", players=players, player=current_player())
 
-
 @app.post("/switch")
 def switch_post():
     pid = request.form.get("player_id")
     if not pid:
         return redirect(url_for("switch"))
-
     row = get_db().execute("SELECT id FROM players WHERE id=?", (pid,)).fetchone()
     if not row:
         return redirect(url_for("switch"))
-
     session.clear()
     session["player_id"] = int(pid)
     return redirect(url_for("game"))
-
 
 @app.get("/logout")
 def logout():
     session.clear()
     return redirect(url_for("register"))
-
 
 @app.get("/game")
 def game():
@@ -593,8 +533,6 @@ def game():
             (last_closed["id"],),
         ).fetchall()
 
-    difficulty = get_setting("difficulty", "easy")
-
     return render_template(
         "game.html",
         player=player,
@@ -604,13 +542,14 @@ def game():
         last_closed=last_closed,
         correct=correct,
         last_results=last_results,
-        difficulty=difficulty,
+        difficulty=get_setting("difficulty", "easy"),
         status=game_status(),
         ended_at=ended_at(),
+        auto_rounds=auto_rounds_enabled(),
+        next_round_at=next_round_at_iso(),
         err=request.args.get("err"),
         msg=request.args.get("msg"),
     )
-
 
 @app.post("/submit")
 def submit():
@@ -621,10 +560,15 @@ def submit():
     if is_game_ended():
         return redirect(url_for("game", msg="ended"))
 
-    con = get_db()
     open_round = get_open_round()
     if not open_round:
-        return redirect(url_for("game"))
+        return redirect(url_for("game", msg="no_open_round"))
+
+    # IMPORTANT FIX:
+    # Block stale pages posting into the wrong round.
+    posted_round_id = (request.form.get("round_id") or "").strip()
+    if not posted_round_id or str(open_round["id"]) != posted_round_id:
+        return redirect(url_for("game", msg="round_changed"))
 
     guess_song = (request.form.get("guess_song") or "").strip()
     guess_artist = (request.form.get("guess_artist") or "").strip()
@@ -636,11 +580,11 @@ def submit():
             guess_year = int(guess_year_raw)
         except ValueError:
             guess_year = None
-            guess_year_raw = ""
 
     if not (guess_song or guess_artist or guess_year_raw):
         return redirect(url_for("game", err="enter_one"))
 
+    con = get_db()
     con.execute(
         """
         INSERT INTO guesses(round_id, player_id, guess_song, guess_artist, guess_year, created_at, updated_at)
@@ -662,13 +606,11 @@ def submit():
         ),
     )
     con.commit()
-
     return redirect(url_for("game"))
 
-
-# =============================
-# API
-# =============================
+# ------------------------------------------------------------
+# API (player auto refresh + admin live panel)
+# ------------------------------------------------------------
 @app.get("/api/state")
 def api_state():
     player = current_player()
@@ -687,7 +629,6 @@ def api_state():
         "auto_rounds": auto_rounds_enabled(),
         "next_round_at": next_round_at_iso(),
     }
-
     if open_round:
         my_guess = get_db().execute(
             "SELECT 1 FROM guesses WHERE round_id=? AND player_id=?",
@@ -698,9 +639,7 @@ def api_state():
             "question": open_round["question"] or "",
             "submitted": bool(my_guess),
         }
-
     return jsonify(out), 200
-
 
 @app.get("/api/standings")
 def api_standings():
@@ -709,16 +648,13 @@ def api_standings():
 
     out = []
     for i, s in enumerate(standings, start=1):
-        out.append(
-            {
-                "rank": i,
-                "player": s["player"],
-                "points": s["points"],
-                "delta": int(delta_map.get(s["player_id"], 0)),
-            }
-        )
+        out.append({
+            "rank": i,
+            "player": s["player"],
+            "points": s["points"],
+            "delta": int(delta_map.get(s["player_id"], 0)),
+        })
     return jsonify(out), 200
-
 
 @app.get("/api/admin/open_round_guesses")
 def api_admin_open_round_guesses():
@@ -727,7 +663,6 @@ def api_admin_open_round_guesses():
 
     con = get_db()
     open_round = get_open_round()
-
     if not open_round:
         return jsonify({
             "ok": True,
@@ -742,12 +677,9 @@ def api_admin_open_round_guesses():
 
     rows = con.execute(
         """
-        SELECT
-          p.name AS player,
-          g.guess_song,
-          g.guess_artist,
-          g.guess_year,
-          g.updated_at
+        SELECT p.name AS player,
+               g.guess_song, g.guess_artist, g.guess_year,
+               g.updated_at
         FROM guesses g
         JOIN players p ON p.id = g.player_id
         WHERE g.round_id = ?
@@ -759,57 +691,41 @@ def api_admin_open_round_guesses():
     return jsonify({
         "ok": True,
         "has_open_round": True,
-        "round": {
-            "id": open_round["id"],
-            "question": open_round["question"] or "",
-        },
-        "rows": [
-            {
-                "player": r["player"],
-                "guess_song": r["guess_song"] or "",
-                "guess_artist": r["guess_artist"] or "",
-                "guess_year": r["guess_year"] if r["guess_year"] is not None else "",
-                "updated_at": r["updated_at"],
-            }
-            for r in rows
-        ],
+        "round": {"id": open_round["id"], "question": open_round["question"] or ""},
+        "rows": [{
+            "player": r["player"],
+            "guess_song": r["guess_song"] or "",
+            "guess_artist": r["guess_artist"] or "",
+            "guess_year": r["guess_year"] if r["guess_year"] is not None else "",
+            "updated_at": r["updated_at"],
+        } for r in rows],
         "game_status": game_status(),
         "ended_at": ended_at(),
         "auto_rounds": auto_rounds_enabled(),
         "next_round_at": next_round_at_iso(),
     }), 200
 
-
-# =============================
-# Admin
-# =============================
-@app.get("/admin/login")
-def admin_login_get():
-    return render_template("admin_login.html", error=None, player=current_player())
-
-
-@app.post("/admin/login")
-def admin_login_post():
-    pw = (request.form.get("password") or "").strip()
-    if not ADMIN_PASSWORD:
-        return render_template(
-            "admin_login.html",
-            error="ADMIN_PASSWORD is not set on the server.",
-            player=current_player(),
-        )
-
-    if pw != ADMIN_PASSWORD:
-        return render_template("admin_login.html", error="Wrong password.", player=current_player())
-
-    session["is_admin"] = True
-    return redirect(url_for("admin"))
-
+# ------------------------------------------------------------
+# Admin pages
+# ------------------------------------------------------------
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    error = None
+    if request.method == "POST":
+        pw = (request.form.get("password") or "").strip()
+        if not ADMIN_PASSWORD:
+            error = "ADMIN_PASSWORD is not set on the server."
+        elif pw != ADMIN_PASSWORD:
+            error = "Wrong password."
+        else:
+            session["is_admin"] = True
+            return redirect(url_for("admin"))
+    return render_template("admin_login.html", error=error, player=current_player())
 
 @app.post("/admin/logout")
 def admin_logout():
     session.pop("is_admin", None)
     return redirect(url_for("register"))
-
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
@@ -822,7 +738,7 @@ def admin():
     err = None
 
     if request.method == "POST":
-        action = request.form.get("action") or ""
+        action = (request.form.get("action") or "").strip()
 
         if action == "set_difficulty":
             if difficulty_locked():
@@ -834,18 +750,30 @@ def admin():
                 set_setting("difficulty", diff)
                 msg = f"Difficulty set to {diff}."
 
+        elif action == "set_prefix":
+            if difficulty_locked():
+                # safe to allow, but keep consistent; you can remove this restriction if you want
+                pass
+            prefix = (request.form.get("question_prefix") or "Song #").strip()
+            if not prefix:
+                prefix = "Song #"
+            set_setting("question_prefix", prefix)
+            msg = "Question prefix updated."
+
         elif action == "start_game":
             if is_game_ended():
                 set_game_running()
             set_setting("auto_rounds", "1")
-            # open first round immediately (no delay)
-            set_setting("next_round_at", utc_now_iso())
-            auto_open_round_if_due()
+
+            # if no open round, open immediately by scheduling "now"
+            if not con.execute("SELECT 1 FROM rounds WHERE status='open' LIMIT 1").fetchone():
+                set_setting("next_round_at", utc_now_iso())
+                auto_open_round_if_due()
             msg = "Game started. Auto-rounds enabled."
 
         elif action == "stop_auto":
             set_setting("auto_rounds", "0")
-            set_setting("next_round_at", "")
+            clear_next_round()
             msg = "Auto-rounds disabled."
 
         elif action == "set_answers":
@@ -859,6 +787,7 @@ def admin():
                     cs = (request.form.get("correct_song") or "").strip() or None
                     ca = (request.form.get("correct_artist") or "").strip() or None
                     cy_raw = (request.form.get("correct_year") or "").strip()
+
                     cy = None
                     if cy_raw:
                         try:
@@ -894,19 +823,19 @@ def admin():
                     con.commit()
                     save_standings_snapshot(rid)
 
-                    # NEW: schedule next round after 5 seconds if auto enabled
-                    if auto_rounds_enabled():
+                    if auto_rounds_enabled() and (game_status() == "running"):
                         set_next_round_in_seconds(5)
-                        msg = "Round closed & scored. Next round will open in 5 seconds."
+                        msg = "Round closed & scored. Next round opens in 5 seconds."
                     else:
-                        msg = "Round closed and scored."
+                        msg = "Round closed & scored."
 
         elif action == "end_game":
             if is_game_ended():
                 msg = "Game is already ended."
             else:
-                # close any open round first (score it)
-                open_round = get_open_round()
+                open_round = con.execute(
+                    "SELECT * FROM rounds WHERE status='open' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
                 if open_round:
                     rid = int(open_round["id"])
                     compute_and_store_round_scores(rid)
@@ -928,20 +857,14 @@ def admin():
             con.execute("UPDATE settings SET value='' WHERE key='ended_at'")
             con.execute("UPDATE settings SET value='0' WHERE key='auto_rounds'")
             con.execute("UPDATE settings SET value='' WHERE key='next_round_at'")
+            con.execute("UPDATE settings SET value='Song #' WHERE key='question_prefix'")
             con.commit()
             msg = "Game reset. Players kept; rounds/guesses cleared."
 
-    # For GET and after POST actions, auto-open if due (useful for the 5s timer)
+    # useful: if the 5s timer is due, open a round when admin loads page
     auto_open_round_if_due()
 
     open_round = get_open_round()
-    difficulty = get_setting("difficulty", "easy")
-    locked = difficulty_locked()
-    status = game_status()
-    ended = ended_at()
-    auto_on = auto_rounds_enabled()
-    next_at = next_round_at_iso()
-
     players = con.execute(
         "SELECT id, name, created_at FROM players ORDER BY name COLLATE NOCASE"
     ).fetchall()
@@ -965,19 +888,16 @@ def admin():
         err=err,
         open_round=open_round,
         players=players,
-        difficulty=difficulty,
-        locked=locked,
-        status=status,
-        ended_at=ended,
         live_rows=live_rows,
+        difficulty=get_setting("difficulty", "easy"),
+        locked=difficulty_locked(),
+        status=game_status(),
+        ended_at=ended_at(),
+        auto_rounds=auto_rounds_enabled(),
+        next_round_at=next_round_at_iso(),
+        question_prefix=get_setting("question_prefix", "Song #"),
         player=current_player(),
-        auto_rounds=auto_on,
-        next_round_at=next_at,
     )
 
-
-# =============================
-# Main
-# =============================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
