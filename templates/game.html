@@ -1,139 +1,85 @@
 {% extends "base.html" %}
 {% block content %}
 
-<style>
-  .game-grid{
-    display:grid;
-    grid-template-columns: 1fr 1fr;
-    gap:16px;
-    align-items:start;
-  }
-  @media (max-width: 900px){
-    .game-grid{ grid-template-columns: 1fr; }
-  }
-
-  .pill{
-    display:inline-block;
-    padding:2px 8px;
-    border-radius:999px;
-    font-size:12px;
-    background:rgba(255,255,255,0.08);
-  }
-  .small{ font-size: 12px; }
-  .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-
-  .delta.up   { color: #30d158; font-weight: 700; }
-  .delta.down { color: #ff453a; font-weight: 700; }
-  .delta.same { color: inherit; opacity: 0.9; }
-
-  .rotate-hint{
-    display:none;
-    position:fixed;
-    inset:0;
-    background:rgba(0,0,0,0.82);
-    color:#fff;
-    z-index:9999;
-    padding:24px;
-    text-align:center;
-  }
-  .rotate-hint .box{
-    max-width:520px;
-    margin:12vh auto 0;
-    padding:18px;
-    border-radius:14px;
-    background:rgba(255,255,255,0.08);
-  }
-  .rotate-hint .box h3{ margin:0 0 10px 0; }
-  .rotate-hint .box p{ margin:0; opacity:0.95; }
-  .rotate-hint .box button{
-    margin-top:14px;
-    padding:10px 14px;
-    border-radius:10px;
-    border:0;
-    cursor:pointer;
-  }
-</style>
-
-<div class="rotate-hint" id="rotateHint">
-  <div class="box">
-    <h3>Rotate to landscape</h3>
-    <p>For the best view (Guess + Standings side-by-side), rotate your device.</p>
-    <button onclick="document.getElementById('rotateHint').style.display='none'">Continue anyway</button>
+<div class="card">
+  <div class="row" style="justify-content:space-between;">
+    <div>
+      <h2>Welcome, {{ player.name }}</h2>
+      <div class="muted">
+        Difficulty: <span class="pill">{{ difficulty }}</span>
+        {% if status == "ended" %}
+          <span class="pill" style="border-color:#4a1f1f; color:#ffb3b3;">Game ended</span>
+        {% endif %}
+      </div>
+    </div>
   </div>
+
+  {% if msg == "round_changed" %}
+    <p class="err" style="margin-top:10px;">Round changed while you were typing. Page refreshed to keep you synced.</p>
+  {% elif msg == "ended" %}
+    <p class="err" style="margin-top:10px;">Game is ended. Submissions are locked.</p>
+  {% endif %}
+
+  {% if err == "enter_one" %}
+    <p class="err" style="margin-top:10px;">Enter at least one field (song, artist or year).</p>
+  {% endif %}
 </div>
 
-<div class="game-grid">
+<div class="grid" style="grid-template-columns:1fr; gap:14px;" id="mainGrid">
+  <!-- left -->
+  <div class="card" id="roundCard">
+    <h3>Round</h3>
 
-  <!-- LEFT: Guess -->
-  <div class="card">
-    <h2>Play</h2>
-    <p class="muted">
-      Player: <strong>{{ player.name }}</strong>
-      · Difficulty: <strong>{{ difficulty }}</strong>
-      · <span class="pill" id="statePill">live</span>
-    </p>
+    {% if open_round and status != "ended" %}
+      <p class="muted" style="margin-top:-6px;">#{{ open_round.id }}</p>
+      <p style="font-size:1.05rem; margin-top:6px;">{{ open_round.question }}</p>
 
-    {% if err == "enter_one" %}
-      <p class="err">Please enter at least one field (song, artist, or year).</p>
-    {% endif %}
+      <form method="post" action="{{ url_for('submit') }}" id="guessForm">
+        <input type="hidden" name="round_id" id="roundIdField" value="{{ open_round.id }}">
 
-    {% if status == "ended" %}
-      <p class="err">
-        Game finished{% if ended_at %} ({{ ended_at }}){% endif %}. Final standings are shown on the right.
-      </p>
-    {% endif %}
-
-    {% if msg == "ended" %}
-      <p class="err">Game is finished. Submissions are locked.</p>
-    {% endif %}
-
-    {% if status != "ended" and open_round %}
-      <h3>Open round <span class="pill" id="roundPill">#{{ open_round.id }}</span></h3>
-      <p id="roundQuestion"><strong>#{{ open_round.id }}</strong> {{ open_round.question or "" }}</p>
-      <p class="muted small" id="submitStatus">
-        {% if my_guess %}Submitted ✅ (you can still edit){% else %}Not submitted yet{% endif %}
-      </p>
-
-      <form method="post" action="{{ url_for('submit') }}">
         <label>Song</label>
-        <input name="guess_song" value="{{ my_guess.guess_song if my_guess else '' }}" placeholder="Your guess">
+        <input name="guess_song" value="{{ my_guess.guess_song if my_guess else '' }}" autocomplete="off">
 
         <label>Artist</label>
-        <input name="guess_artist" value="{{ my_guess.guess_artist if my_guess else '' }}" placeholder="Your guess">
+        <input name="guess_artist" value="{{ my_guess.guess_artist if my_guess else '' }}" autocomplete="off">
 
         <label>Year</label>
-        <input name="guess_year" value="{{ my_guess.guess_year if my_guess else '' }}" placeholder="e.g. 1976">
+        <input name="guess_year" value="{{ my_guess.guess_year if my_guess and my_guess.guess_year is not none else '' }}" inputmode="numeric">
 
-        <button class="btn" type="submit">
-          {% if my_guess %}Update guess{% else %}Submit guess{% endif %}
-        </button>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn" type="submit">Submit</button>
+          {% if my_guess %}
+            <span class="ok">Submitted (you can edit until round closes)</span>
+          {% endif %}
+        </div>
       </form>
+
     {% elif status == "ended" %}
-      <p class="muted">No more guesses. Enjoy the podium 🏁</p>
+      <p class="muted">Game ended at: {{ ended_at }}</p>
+      <p class="muted">Standings will keep updating slowly for viewers.</p>
+
     {% else %}
-      <p class="muted">No open round yet. Wait for the admin to start one.</p>
+      <p class="muted">No open round right now.</p>
+
+      {% if auto_rounds and next_round_at %}
+        <p class="muted">Next round scheduled at: <span id="nextAt">{{ next_round_at }}</span></p>
+        <p class="muted">Countdown: <span id="countdown">...</span></p>
+      {% endif %}
     {% endif %}
   </div>
 
-  <!-- RIGHT: Standings -->
+  <!-- right -->
   <div class="card">
-    <h2>
-      Standings
-      <span class="pill" id="standingsPill">auto</span>
-    </h2>
+    <h3>Standings</h3>
+    <div class="muted" id="standingsMeta">Live</div>
 
-    <p class="muted small">
-      Updates every <span class="mono">5s</span>.
-      Last update: <span class="mono" id="standingsLastUpdate">-</span>
-    </p>
-
-    <table>
+    <table style="margin-top:8px;">
       <thead>
         <tr>
-          <th>#</th>
+          <th style="width:70px;">#</th>
           <th>Player</th>
-          <th>Pts</th>
-          <th>Δ</th>
+          <th style="width:90px;">Pts</th>
+          <th style="width:110px;">Δ</th>
         </tr>
       </thead>
       <tbody id="standingsBody">
@@ -141,171 +87,166 @@
           <tr>
             <td>{{ s.rank }}</td>
             <td>{{ s.player }}</td>
-            <td><strong>{{ s.points }}</strong></td>
-            <td>
-              {% if s.delta > 0 %}
-                <span class="delta up">+{{ s.delta }}</span>
-              {% elif s.delta < 0 %}
-                <span class="delta down">{{ s.delta }}</span>
-              {% else %}
-                <span class="delta same">0</span>
-              {% endif %}
+            <td>{{ s.points }}</td>
+            <td class="{% if s.delta>0 %}delta-up{% elif s.delta<0 %}delta-down{% else %}delta-same{% endif %}">
+              {% if s.delta>0 %}▲ {{ s.delta }}{% elif s.delta<0 %}▼ {{ -s.delta }}{% else %}• 0{% endif %}
             </td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
-  </div>
 
+    {% if last_closed %}
+      <hr style="border:0; border-top:1px solid var(--line); margin:14px 0;">
+      <h3>Last round answers</h3>
+      <p class="muted" style="margin-top:-6px;">#{{ last_closed.id }} {{ last_closed.question }}</p>
+
+      <div class="card" style="margin-top:10px;">
+        <div class="muted">Correct</div>
+        <div><b>Song:</b> {{ correct.song }}</div>
+        <div><b>Artist:</b> {{ correct.artist }}</div>
+        <div><b>Year:</b> {{ correct.year }}</div>
+      </div>
+
+      <table style="margin-top:10px;">
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th>Song</th>
+            <th>Artist</th>
+            <th>Year</th>
+            <th style="width:70px;">Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in last_results %}
+            <tr>
+              <td>{{ r.player }}</td>
+              <td>{{ r.guess_song or '' }}</td>
+              <td>{{ r.guess_artist or '' }}</td>
+              <td>{{ r.guess_year if r.guess_year is not none else '' }}</td>
+              <td>{{ r.total_points }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
 </div>
 
-{% if last_closed %}
-  <div class="card" style="margin-top:16px;">
-    <h2>Last round results</h2>
-    <p class="muted">
-      <strong>#{{ last_closed.id }}</strong> {{ last_closed.question or "" }}
-    </p>
-
-    {% if correct %}
-      <p>
-        <strong>Correct:</strong>
-        {{ correct.song }} · {{ correct.artist }} · {{ correct.year }}
-      </p>
-    {% endif %}
-
-    <table>
-      <thead>
-        <tr>
-          <th>Player</th>
-          <th>Song</th>
-          <th>Artist</th>
-          <th>Year</th>
-          <th>Song P</th>
-          <th>Artist P</th>
-          <th>Year P</th>
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in last_results %}
-          <tr>
-            <td>{{ r.player }}</td>
-            <td>{{ r.guess_song or '' }}</td>
-            <td>{{ r.guess_artist or '' }}</td>
-            <td>{{ r.guess_year if r.guess_year is not none else '' }}</td>
-            <td>{{ r.points_song }}</td>
-            <td>{{ r.points_artist }}</td>
-            <td>{{ r.points_year }}</td>
-            <td><strong>{{ r.total_points }}</strong></td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-{% endif %}
-
 <script>
-  // Landscape hint
-  const hint = document.getElementById("rotateHint");
-  function updateHint(){
-    const portrait = window.matchMedia && window.matchMedia("(orientation: portrait)").matches;
-    hint.style.display = portrait ? "block" : "none";
+  // Layout: force 2 columns on wider screens (no “rotate” overlay anymore)
+  const mq = window.matchMedia("(min-width: 900px)");
+  function applyColumns() {
+    const grid = document.getElementById("mainGrid");
+    if (!grid) return;
+    grid.style.gridTemplateColumns = mq.matches ? "1fr 1fr" : "1fr";
   }
-  updateHint();
-  window.addEventListener("resize", updateHint);
+  mq.addEventListener("change", applyColumns);
+  applyColumns();
 
-  function esc(s){
-    return String(s ?? "").replace(/[&<>"']/g, m => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-    }[m]));
+  // Poll intervals (NOT faster than 3s)
+  let STATE_MS = 4000;
+  let STANDINGS_MS = 6000;
+
+  let currentRoundId = {{ open_round.id if open_round else "null" }};
+  let ended = {{ "true" if status == "ended" else "false" }};
+
+  let stateTimer = null;
+  let standingsTimer = null;
+
+  function setText(id, txt) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = txt;
   }
 
-  // Auto-refresh standings
-  const standingsBody = document.getElementById("standingsBody");
-  const standingsLastUpdate = document.getElementById("standingsLastUpdate");
-  const standingsPill = document.getElementById("standingsPill");
+  async function refreshStandings() {
+    try {
+      const r = await fetch("/api/standings?ts=" + Date.now(), { cache: "no-store" });
+      const data = await r.json();
+      const tbody = document.getElementById("standingsBody");
+      if (!tbody || !Array.isArray(data)) return;
 
-  async function refreshStandings(){
-    try{
-      const res = await fetch("/api/standings?ts=" + Date.now(), { cache: "no-store" });
-      if(!res.ok) { standingsPill.textContent = "error"; return; }
-      const rows = await res.json(); // [{rank,player,points,delta}]
-      const rowsArr = rows || [];
+      tbody.innerHTML = "";
+      for (const row of data) {
+        const delta = Number(row.delta || 0);
+        const cls = delta > 0 ? "delta-up" : (delta < 0 ? "delta-down" : "delta-same");
+        const sym = delta > 0 ? ("▲ " + delta) : (delta < 0 ? ("▼ " + Math.abs(delta)) : "• 0");
 
-      const html = rowsArr.map(r => {
-        const d = Number(r.delta || 0);
-        let deltaHtml = `<span class="delta same">0</span>`;
-        if(d > 0) deltaHtml = `<span class="delta up">+${d}</span>`;
-        if(d < 0) deltaHtml = `<span class="delta down">${d}</span>`;
-
-        return `
-          <tr>
-            <td>${esc(r.rank)}</td>
-            <td>${esc(r.player)}</td>
-            <td><strong>${esc(Number(r.points || 0))}</strong></td>
-            <td>${deltaHtml}</td>
-          </tr>
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${row.rank}</td>
+          <td>${escapeHtml(row.player)}</td>
+          <td>${row.points}</td>
+          <td class="${cls}">${sym}</td>
         `;
-      }).join("");
-
-      standingsBody.innerHTML = html || `<tr><td colspan="4" class="muted">No players yet.</td></tr>`;
-      standingsLastUpdate.textContent = new Date().toLocaleTimeString();
-      standingsPill.textContent = "auto";
-    }catch(e){
-      standingsPill.textContent = "offline";
+        tbody.appendChild(tr);
+      }
+      setText("standingsMeta", ended ? "Ended (slow refresh)" : "Live");
+    } catch (e) {
+      // keep silent; next poll will recover
     }
   }
 
-  refreshStandings();
-  setInterval(refreshStandings, 5000);
+  async function refreshState() {
+    try {
+      const r = await fetch("/api/state?ts=" + Date.now(), { cache: "no-store" });
+      const s = await r.json();
+      if (!s || !s.ok) return;
 
-  // Auto-detect new round open/close
-  let currentRoundId = {{ open_round.id if open_round else "null" }};
-  const statePill = document.getElementById("statePill");
-  const roundPill = document.getElementById("roundPill");
-  const roundQuestion = document.getElementById("roundQuestion");
-  const submitStatus = document.getElementById("submitStatus");
-
-  async function refreshState(){
-    try{
-      const res = await fetch("/api/state?ts=" + Date.now(), { cache: "no-store" });
-      if(!res.ok){ statePill.textContent = "error"; return; }
-      const data = await res.json();
-
-      if(data.needs_register){
+      if (s.needs_register) {
         window.location.href = "/register";
         return;
       }
 
-      const open = data.open_round;
-      const newId = open ? Number(open.id) : null;
-
-      // round changed
-      if(newId !== currentRoundId){
-        window.location.reload();
+      if (s.game_status === "ended") {
+        ended = true;
+        // Stop state polling; keep standings slow
+        if (stateTimer) { clearInterval(stateTimer); stateTimer = null; }
+        if (standingsTimer) { clearInterval(standingsTimer); standingsTimer = null; }
+        STANDINGS_MS = 10000;
+        standingsTimer = setInterval(refreshStandings, STANDINGS_MS);
         return;
       }
 
-      if(open){
-        if(roundPill) roundPill.textContent = "#" + open.id;
-        if(roundQuestion) roundQuestion.innerHTML = `<strong>#${esc(open.id)}</strong> ${esc(open.question || "")}`;
-        if(submitStatus) submitStatus.textContent = open.submitted ? "Submitted ✅ (you can still edit)" : "Not submitted yet";
-      }
+      const newId = s.open_round ? s.open_round.id : null;
 
-      // game ended from admin -> reload to hide form
-      if(data.game_status === "ended"){
-        window.location.reload();
+      // If round changes (open->none or none->open or id changes), reload once
+      // This guarantees the correct round UI and prevents stale entry issues.
+      if (newId !== currentRoundId) {
+        window.location.href = "/game?msg=round_changed";
         return;
       }
 
-      statePill.textContent = "live";
-    }catch(e){
-      statePill.textContent = "offline";
-    }
+      // Countdown (optional)
+      if (!s.open_round && s.next_round_at) {
+        updateCountdown(s.next_round_at);
+      }
+
+    } catch (e) {}
   }
 
+  function updateCountdown(nextIso) {
+    const dt = new Date(nextIso);
+    if (isNaN(dt.getTime())) return;
+    const ms = dt.getTime() - Date.now();
+    const sec = Math.max(0, Math.ceil(ms / 1000));
+    const el = document.getElementById("countdown");
+    if (el) el.textContent = sec + "s";
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[c]));
+  }
+
+  // Start polling
+  refreshStandings();
   refreshState();
-  setInterval(refreshState, 3000);
+
+  standingsTimer = setInterval(refreshStandings, STANDINGS_MS);
+  if (!ended) stateTimer = setInterval(refreshState, STATE_MS);
 </script>
 
 {% endblock %}
